@@ -6,6 +6,23 @@ echo ======================================================
 echo             WhisperGo - Script de Compilacao
 echo ======================================================
 
+REM Fecha qualquer instancia do aplicativo em execucao para liberar o arquivo
+echo [INFO] Encerrando instancias ativas do WhisperGo/WhisperGoals...
+taskkill /F /IM WhisperGo.exe /T >nul 2>&1
+taskkill /F /IM WhisperGoals.exe /T >nul 2>&1
+
+REM Pequena pausa para garantir a liberacao do processo pelo sistema operacional
+ping 127.0.0.1 -n 2 >nul
+
+REM Se o executavel antigo ainda existir e estiver bloqueado, tenta renomear
+if exist "WhisperGo.exe" (
+    del /f /q "WhisperGo.exe" >nul 2>&1
+    if exist "WhisperGo.exe" (
+        echo [AVISO] WhisperGo.exe ainda em uso. Renomeando para substituir...
+        ren "WhisperGo.exe" "WhisperGo_old_%RANDOM%.bak" >nul 2>&1
+    )
+)
+
 set JSON_FILE=build_info.json
 
 REM Verifica se o arquivo build_info.json existe, senao cria
@@ -44,6 +61,8 @@ if %ERRORLEVEL% equ 0 (
     echo  Executavel gerado: WhisperGo.exe
     echo  Data: %DATE% %TIME%
     echo ======================================================
+    REM Limpa possiveis arquivos renomeados residuais
+    del /f /q WhisperGo_old_*.bak >nul 2>&1
 ) else (
     echo.
     echo ======================================================
@@ -53,3 +72,4 @@ if %ERRORLEVEL% equ 0 (
 
 echo.
 pause
+
