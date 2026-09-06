@@ -1,10 +1,10 @@
-﻿// WhisperGo UI Logic
+﻿// WhisperGo UI Logic - Ultra Compact & Polished
 
 let isRecording = false;
 let currentConfig = null;
 let currentVolume = 0;
 let animFrameId = null;
-let chunks = [];
+let sessionHistory = [];
 
 // Elementos DOM
 const btnRecord = document.getElementById("btnRecord");
@@ -13,23 +13,27 @@ const statusText = document.getElementById("statusText");
 const timerDisplay = document.getElementById("timerDisplay");
 const chunkThresholdDisplay = document.getElementById("chunkThresholdDisplay");
 const pauseNotice = document.getElementById("pauseNotice");
-const micNameDisplay = document.getElementById("micNameDisplay");
-const finalText = document.getElementById("finalText");
-const fileHint = document.getElementById("fileHint");
-const btnCopy = document.getElementById("btnCopy");
-const btnClear = document.getElementById("btnClear");
-const chunksToggle = document.getElementById("chunksToggle");
-const chunksList = document.getElementById("chunksList");
-const chunksCount = document.getElementById("chunksCount");
-const chunksChevron = document.getElementById("chunksChevron");
 const buildBadge = document.getElementById("buildBadge");
+const resultBox = document.getElementById("resultBox");
+const finalTextPreview = document.getElementById("finalTextPreview");
+const btnCopy = document.getElementById("btnCopy");
 
-// Modal
+// Histórico
+const btnHistory = document.getElementById("btnHistory");
+const historyBadge = document.getElementById("historyBadge");
+const historyModal = document.getElementById("historyModal");
+const btnCloseHistory = document.getElementById("btnCloseHistory");
+const btnCloseHistoryBtn = document.getElementById("btnCloseHistoryBtn");
+const btnClearHistory = document.getElementById("btnClearHistory");
+const historyList = document.getElementById("historyList");
+
+// Configurações Modal
 const btnSettings = document.getElementById("btnSettings");
 const settingsModal = document.getElementById("settingsModal");
 const btnCloseModal = document.getElementById("btnCloseModal");
 const btnCancelSettings = document.getElementById("btnCancelSettings");
 const btnSaveSettings = document.getElementById("btnSaveSettings");
+const apiKeyAlert = document.getElementById("apiKeyAlert");
 const cfgProvider = document.getElementById("cfgProvider");
 const cfgBaseURL = document.getElementById("cfgBaseURL");
 const cfgAPIKey = document.getElementById("cfgAPIKey");
@@ -39,20 +43,19 @@ const btnRefreshMics = document.getElementById("btnRefreshMics");
 const cfgAudioModel = document.getElementById("cfgAudioModel");
 const cfgRewriteModel = document.getElementById("cfgRewriteModel");
 const btnFetchModels = document.getElementById("btnFetchModels");
-const cfgMinChunk = document.getElementById("cfgMinChunk");
-const cfgMaxChunk = document.getElementById("cfgMaxChunk");
 const audioModelList = document.getElementById("audioModelList");
 const rewriteModelList = document.getElementById("rewriteModelList");
 
-// Canvas de Áudio
+// Canvas
 const canvas = document.getElementById("waveform");
 const ctx = canvas.getContext("2d");
 
 // Atalho da Tecla ENTER para Iniciar / Parar Gravação
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
-    const isModalOpen = settingsModal.classList.contains("active");
-    if (isModalOpen) return;
+    const isSettingsOpen = settingsModal.classList.contains("active");
+    const isHistoryOpen = historyModal.classList.contains("active");
+    if (isSettingsOpen || isHistoryOpen) return;
 
     const activeEl = document.activeElement;
     const tag = activeEl ? activeEl.tagName.toLowerCase() : "";
@@ -63,13 +66,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Animação de Onda Contínua
+// Desenho da Forma de Onda Fluida
 function drawWaveform() {
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  const numBars = 32;
+  const numBars = 24;
   const barWidth = 6;
   const spacing = (width - numBars * barWidth) / (numBars + 1);
   const time = Date.now() * 0.005;
@@ -81,19 +84,19 @@ function drawWaveform() {
     if (isRecording) {
       const norm = Math.min(1.0, currentVolume);
       const centerFactor = Math.sin((i / (numBars - 1)) * Math.PI);
-      const osc = 0.5 + 0.5 * Math.sin(time * 3 + i * 0.4);
+      const osc = 0.5 + 0.5 * Math.sin(time * 3.5 + i * 0.5);
       barHeight = 4 + (norm * centerFactor * osc * (height - 8));
-      barHeight = Math.max(4, Math.min(height - 6, barHeight));
+      barHeight = Math.max(4, Math.min(height - 4, barHeight));
 
       const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
       gradient.addColorStop(0, "#ef4444");
       gradient.addColorStop(1, "#f97316");
       ctx.fillStyle = gradient;
     } else {
-      // Idle pulse sutil
-      const pulse = 2 + Math.sin(time + i * 0.2) * 1.5;
+      // Idle pulse sutil e elegante
+      const pulse = 2 + Math.sin(time + i * 0.25) * 1.5;
       barHeight = Math.max(3, pulse);
-      ctx.fillStyle = "#334155";
+      ctx.fillStyle = "#25334d";
     }
 
     const y = (height - barHeight) / 2;
@@ -105,20 +108,30 @@ function drawWaveform() {
   animFrameId = requestAnimationFrame(drawWaveform);
 }
 
-// Alterna gravação
+// Botão Iniciar / Parar
 btnRecord.addEventListener("click", async () => {
   if (!isRecording) {
+    // Verificação de API Key antes de começar
+    if (!currentConfig || !currentConfig.api_key || !currentConfig.api_key.trim()) {
+      openSettingsModal(true);
+      return;
+    }
+
     if (window.startRecording) {
       const res = await window.startRecording();
       if (res && res.error) {
-        alert("Erro ao iniciar gravação: " + res.error);
+        if (res.error === "API_KEY_REQUIRED") {
+          openSettingsModal(true);
+        } else {
+          alert("Erro: " + (res.message || res.error));
+        }
         return;
       }
     }
     setRecordingState(true);
   } else {
     setRecordingState(false);
-    updateStatus("Encerrando e polindo...", "processing");
+    updateStatus("Polindo texto...", "processing");
     if (window.stopRecording) {
       await window.stopRecording();
     }
@@ -132,8 +145,6 @@ function setRecordingState(recording) {
     btnRecord.innerHTML = "<span>⏹</span> Finalizar e Polir";
     updateStatus("Gravando...", "recording");
     timerDisplay.innerText = "00:00";
-    chunks = [];
-    renderChunks();
   } else {
     btnRecord.className = "btn-primary btn-record";
     btnRecord.innerHTML = "<span>▶</span> Iniciar Gravação";
@@ -145,24 +156,18 @@ function updateStatus(text, type) {
   statusPill.className = "status-pill " + (type || "");
 }
 
-// Callbacks chamados pelo backend Go
+// Callbacks do Backend Go
 window.onVolumeUpdate = function(vol, sec, isPauseWait) {
   currentVolume = vol;
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   timerDisplay.innerText = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  
-  if (isPauseWait) {
-    pauseNotice.style.display = "inline";
-  } else {
-    pauseNotice.style.display = "none";
-  }
+  pauseNotice.style.display = isPauseWait ? "inline" : "none";
 };
 
 window.onChunkTranscribed = function(chunkIndex, text) {
   if (text && text.trim()) {
-    chunks.push({ index: chunkIndex, text: text.trim() });
-    renderChunks();
+    updateStatus(`Bloco ${chunkIndex} transcrito`, "processing");
   }
 };
 
@@ -171,43 +176,23 @@ window.onStatusChange = function(status, type) {
 };
 
 window.onFinalTextReady = function(rawText, polishedText) {
-  finalText.value = polishedText;
-  fileHint.style.display = "flex";
-  updateStatus("Concluído (Copiado)", "success");
+  finalTextPreview.innerText = polishedText;
+  resultBox.style.display = "flex";
+  updateStatus("Copiado!", "success");
   setRecordingState(false);
+
+  // Adiciona ao Histórico da Sessão
+  sessionHistory.unshift({
+    id: Date.now(),
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    text: polishedText
+  });
+  updateHistoryUI();
 };
 
-function renderChunks() {
-  chunksCount.innerText = chunks.length;
-  chunksList.innerHTML = "";
-  chunks.forEach(c => {
-    const item = document.createElement("div");
-    item.className = "chunk-item";
-    item.innerHTML = `
-      <div class="chunk-meta">Bloco ${c.index}</div>
-      <div class="chunk-text">"${escapeHtml(c.text)}"</div>
-    `;
-    chunksList.appendChild(item);
-  });
-  if (chunks.length > 0) {
-    chunksList.scrollTop = chunksList.scrollHeight;
-  }
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-// Accordion de blocos
-chunksToggle.addEventListener("click", () => {
-  const isHidden = chunksList.style.display === "none";
-  chunksList.style.display = isHidden ? "flex" : "none";
-  chunksChevron.innerText = isHidden ? "▲" : "▼";
-});
-
-// Copiar texto
+// Copiar texto mais recente
 btnCopy.addEventListener("click", async () => {
-  const text = finalText.value;
+  const text = finalTextPreview.innerText;
   if (!text) return;
   if (window.copyToClipboard) {
     await window.copyToClipboard(text);
@@ -219,26 +204,69 @@ btnCopy.addEventListener("click", async () => {
   setTimeout(() => {
     btnCopy.innerText = "📋 Copiar";
     btnCopy.classList.remove("success");
-  }, 1800);
+  }, 1600);
 });
 
-// Limpar
-btnClear.addEventListener("click", () => {
-  finalText.value = "";
-  fileHint.style.display = "none";
-  chunks = [];
-  renderChunks();
-  updateStatus("Pronto", "");
+// Modal de Histórico da Sessão
+btnHistory.addEventListener("click", () => {
+  historyModal.classList.add("active");
+});
+btnCloseHistory.addEventListener("click", () => {
+  historyModal.classList.remove("active");
+});
+btnCloseHistoryBtn.addEventListener("click", () => {
+  historyModal.classList.remove("active");
+});
+btnClearHistory.addEventListener("click", () => {
+  sessionHistory = [];
+  updateHistoryUI();
 });
 
-// Toggle senha API Key
-btnToggleKey.addEventListener("click", () => {
-  cfgAPIKey.type = cfgAPIKey.type === "password" ? "text" : "password";
-});
+function updateHistoryUI() {
+  historyBadge.innerText = sessionHistory.length;
+  if (sessionHistory.length === 0) {
+    historyList.innerHTML = '<div class="empty-history">Nenhuma gravação realizada nesta sessão ainda.</div>';
+    return;
+  }
+
+  historyList.innerHTML = "";
+  sessionHistory.forEach(item => {
+    const el = document.createElement("div");
+    el.className = "history-item";
+    el.innerHTML = `
+      <div class="history-item-top">
+        <span class="history-time">🕒 ${item.time}</span>
+        <button class="sm-btn btn-copy-hist" data-id="${item.id}">📋 Copiar</button>
+      </div>
+      <div class="history-text">${escapeHtml(item.text)}</div>
+    `;
+
+    const copyBtn = el.querySelector(".btn-copy-hist");
+    copyBtn.addEventListener("click", async () => {
+      if (window.copyToClipboard) {
+        await window.copyToClipboard(item.text);
+      } else {
+        navigator.clipboard.writeText(item.text);
+      }
+      copyBtn.innerText = "✓ Copiado!";
+      copyBtn.classList.add("success");
+      setTimeout(() => {
+        copyBtn.innerText = "📋 Copiar";
+        copyBtn.classList.remove("success");
+      }, 1600);
+    });
+
+    historyList.appendChild(el);
+  });
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 // Modal de Configurações
 btnSettings.addEventListener("click", () => {
-  openSettingsModal();
+  openSettingsModal(false);
 });
 btnCloseModal.addEventListener("click", () => {
   settingsModal.classList.remove("active");
@@ -247,13 +275,21 @@ btnCancelSettings.addEventListener("click", () => {
   settingsModal.classList.remove("active");
 });
 
-async function openSettingsModal() {
+async function openSettingsModal(showApiKeyAlert) {
   if (window.getConfig) {
     const jsonStr = await window.getConfig();
     currentConfig = JSON.parse(jsonStr);
     populateSettings(currentConfig);
   }
   await refreshMicrophones();
+
+  if (showApiKeyAlert) {
+    apiKeyAlert.style.display = "block";
+    setTimeout(() => { cfgAPIKey.focus(); }, 150);
+  } else {
+    apiKeyAlert.style.display = "none";
+  }
+
   settingsModal.classList.add("active");
 }
 
@@ -263,8 +299,6 @@ function populateSettings(cfg) {
   cfgAPIKey.value = cfg.api_key || "";
   cfgAudioModel.value = cfg.last_audio_model || "google/gemini-2.5-flash";
   cfgRewriteModel.value = cfg.last_rewrite_model || "google/gemini-2.5-flash";
-  cfgMinChunk.value = cfg.min_chunk_seconds || 20;
-  cfgMaxChunk.value = cfg.max_chunk_seconds || 35;
   chunkThresholdDisplay.innerText = ` / ${cfg.min_chunk_seconds || 20}s`;
 
   updateProviderHints(cfgProvider.value);
@@ -291,6 +325,10 @@ function updateProviderHints(provider) {
   }
 }
 
+btnToggleKey.addEventListener("click", () => {
+  cfgAPIKey.type = cfgAPIKey.type === "password" ? "text" : "password";
+});
+
 async function refreshMicrophones() {
   if (!window.listMicrophones) return;
   const listJson = await window.listMicrophones();
@@ -309,7 +347,7 @@ async function refreshMicrophones() {
 btnRefreshMics.addEventListener("click", refreshMicrophones);
 
 btnFetchModels.addEventListener("click", async () => {
-  btnFetchModels.innerText = "Buscando...";
+  btnFetchModels.innerText = "...";
   try {
     if (window.fetchModels) {
       const modelsJson = await window.fetchModels();
@@ -324,12 +362,12 @@ btnFetchModels.addEventListener("click", async () => {
         opt2.value = m;
         rewriteModelList.appendChild(opt2);
       });
-      alert(`Encontrados ${models.length} modelos disponíveis.`);
+      alert(`Encontrados ${models.length} modelos.`);
     }
   } catch(e) {
     alert("Erro ao buscar modelos: " + e);
   } finally {
-    btnFetchModels.innerText = "🔍 Buscar Modelos";
+    btnFetchModels.innerText = "🔍 Buscar";
   }
 });
 
@@ -341,8 +379,8 @@ btnSaveSettings.addEventListener("click", async () => {
     selected_microphone: cfgMicrophone.value,
     last_audio_model: cfgAudioModel.value.trim(),
     last_rewrite_model: cfgRewriteModel.value.trim(),
-    min_chunk_seconds: parseInt(cfgMinChunk.value) || 20,
-    max_chunk_seconds: parseInt(cfgMaxChunk.value) || 35,
+    min_chunk_seconds: (currentConfig && currentConfig.min_chunk_seconds) || 20,
+    max_chunk_seconds: (currentConfig && currentConfig.max_chunk_seconds) || 35,
     silence_pause_seconds: (currentConfig && currentConfig.silence_pause_seconds) || 0.45,
     silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.008,
     sample_rate: (currentConfig && currentConfig.sample_rate) || 16000
@@ -352,9 +390,8 @@ btnSaveSettings.addEventListener("click", async () => {
     await window.saveConfig(JSON.stringify(newCfg));
   }
   currentConfig = newCfg;
-  chunkThresholdDisplay.innerText = ` / ${newCfg.min_chunk_seconds}s`;
-  micNameDisplay.innerText = "Microfone: " + (newCfg.selected_microphone === "default" ? "Padrão do Sistema" : newCfg.selected_microphone);
   settingsModal.classList.remove("active");
+  apiKeyAlert.style.display = "none";
 });
 
 // Inicialização
@@ -363,7 +400,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (window.getConfig) {
     const jsonStr = await window.getConfig();
     currentConfig = JSON.parse(jsonStr);
-    micNameDisplay.innerText = "Microfone: " + (currentConfig.selected_microphone === "default" ? "Padrão do Sistema" : currentConfig.selected_microphone);
     chunkThresholdDisplay.innerText = ` / ${currentConfig.min_chunk_seconds || 20}s`;
   }
   if (window.getAppInfo) {

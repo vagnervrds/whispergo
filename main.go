@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/atotto/clipboard"
 	"github.com/jchv/go-webview2"
@@ -42,10 +44,27 @@ func getEffectiveBuildNumber() string {
 	return BuildNumber
 }
 
+func applyDarkTitleBar(hwnd uintptr) {
+	dwm := syscall.NewLazyDLL("dwmapi.dll")
+	setAttr := dwm.NewProc("DwmSetWindowAttribute")
+
+	darkMode := int32(1)
+	// DWMWA_USE_IMMERSIVE_DARK_MODE (20 no Win 11/10 20H1+, 19 nas builds anteriores)
+	_, _, _ = setAttr.Call(hwnd, 20, uintptr(unsafe.Pointer(&darkMode)), 4)
+	_, _, _ = setAttr.Call(hwnd, 19, uintptr(unsafe.Pointer(&darkMode)), 4)
+
+	// DWMWA_CAPTION_COLOR = 35 (Windows 11) -> 0x00190F0B (#0b0f19)
+	captionColor := uint32(0x00190F0B)
+	_, _, _ = setAttr.Call(hwnd, 35, uintptr(unsafe.Pointer(&captionColor)), 4)
+
+	// DWMWA_TEXT_COLOR = 36 (Windows 11) -> 0x00F9FAF1 (#f1f5f9)
+	textColor := uint32(0x00F9FAF1)
+	_, _, _ = setAttr.Call(hwnd, 36, uintptr(unsafe.Pointer(&textColor)), 4)
+}
+
 func main() {
 	LogInfo("Iniciando WhisperGo (Build: #%s)", getEffectiveBuildNumber())
 
-	// Servidor local de assets estáticos
 	subFS, err := fs.Sub(assetsFS, "assets")
 	if err != nil {
 		LogError(err, "Falha ao carregar assets embutidos")
@@ -69,14 +88,14 @@ func main() {
 
 	LogInfo("Servidor interno de assets rodando na porta %d", port)
 
-	// Criação da Janela Nativa WebView2
+	// Janela compacta e moderna
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "WhisperGo",
-			Width:  460,
-			Height: 640,
+			Width:  390,
+			Height: 460,
 			Center: true,
 		},
 	})
@@ -86,6 +105,9 @@ func main() {
 		return
 	}
 	defer w.Destroy()
+
+	// Ajusta a barra de título do Windows para o tema escuro da aplicação (#0b0f19)
+	applyDarkTitleBar(uintptr(w.Window()))
 
 	_ = LoadConfig()
 
@@ -155,6 +177,16 @@ func main() {
 		defer recorderMutex.Unlock()
 
 		currentCfg := LoadConfig()
+
+		// VERIFICAÇÃO CRÍTICA: API Key obrigatória antes de gravar!
+		if strings.TrimSpace(currentCfg.APIKey) == "" {
+			LogWarn("Tentativa de gravação bloqueada: API Key não configurada")
+			return map[string]string{
+				"error":   "API_KEY_REQUIRED",
+				"message": "Nenhuma API Key configurada. Por favor, insira sua chave nas configurações antes de iniciar a gravação.",
+			}
+		}
+
 		rec := NewAudioRecorder(currentCfg)
 
 		textsMutex.Lock()
