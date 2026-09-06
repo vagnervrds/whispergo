@@ -1,0 +1,33 @@
+﻿# Arquivos de configuracao pessoal e chaves de API
+whisper_config.json
+config.json
+
+# Saidas e transcricoes de audio
+transcricao_final.txt
+*.wav
+*.mp3
+*.m4a
+
+# Binarios executaveis
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Diretorios temporarios e de build
+build/
+bin/
+tmp/
+temp/
+
+# IDEs e editores
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosv
+*.sln.docstates
+
+# Logs
+*.log

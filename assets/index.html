@@ -1,0 +1,166 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhisperGo</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Cabeçalho -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">🎙️</div>
+        <div class="brand-title">WhisperGo</div>
+        <span id="buildBadge" class="build-badge">b1</span>
+      </div>
+      <div class="header-actions">
+        <button id="btnSettings" class="icon-btn" title="Configurações">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Cartão de Gravação & Status -->
+    <div class="recording-card">
+      <div id="statusPill" class="status-pill">
+        <span class="status-dot"></span>
+        <span id="statusText">Pronto</span>
+      </div>
+
+      <!-- Visualizador de Ondas Sonoras -->
+      <div class="visualizer-box">
+        <canvas id="waveform" width="480" height="60"></canvas>
+      </div>
+
+      <!-- Tempo e Dica de Corte Inteligente -->
+      <div class="timer-text">
+        <span id="timerDisplay" class="active-timer">00:00</span>
+        <span id="chunkThresholdDisplay" style="color: #64748b;"> / 20s</span>
+        <span id="pauseNotice" style="display:none; color:#38bdf8; margin-left: 6px;">[ouvindo pausa]</span>
+      </div>
+      <div id="micNameDisplay" class="timer-hint">Microfone: Padrão do Sistema</div>
+
+      <!-- Botão Principal de Ação -->
+      <button id="btnRecord" class="btn-primary btn-record">
+        <span>▶</span> Iniciar Gravação
+      </button>
+    </div>
+
+    <!-- Texto Final Reescrito -->
+    <div class="result-card">
+      <div class="section-title-row">
+        <div class="section-title">
+          <span>✨</span> Texto Final Reescrito
+        </div>
+        <div class="action-row">
+          <button id="btnCopy" class="sm-btn" title="Copiar texto">
+            📋 Copiar
+          </button>
+          <button id="btnClear" class="sm-btn" title="Limpar">
+            🗑️ Limpar
+          </button>
+        </div>
+      </div>
+      <textarea id="finalText" class="text-output" placeholder="O texto final corrigido e polido pelo modelo aparecerá aqui automaticamente..." spellcheck="false"></textarea>
+      <div id="fileHint" class="saved-hint" style="display: none;">
+        💾 Salvo em transcricao_final.txt
+      </div>
+    </div>
+
+    <!-- Blocos Transcritos Parciais -->
+    <div class="chunks-card">
+      <div id="chunksToggle" class="chunks-header">
+        <span>📝 Transcrições Parciais (<span id="chunksCount">0</span> blocos)</span>
+        <span id="chunksChevron">▼</span>
+      </div>
+      <div id="chunksList" class="chunks-list" style="display: none;">
+        <!-- Itens inseridos dinamicamente -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Modal de Configurações -->
+  <div id="settingsModal" class="modal-backdrop">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-title">Configurações do WhisperGo</div>
+        <button id="btnCloseModal" class="icon-btn" style="border:none;">✕</button>
+      </div>
+
+      <!-- Provedor -->
+      <div class="form-group">
+        <label class="form-label">Provedor de IA</label>
+        <select id="cfgProvider" class="form-select">
+          <option value="openrouter">OpenRouter (Padrão)</option>
+          <option value="proxyai">ProxyAI</option>
+          <option value="custom">Personalizado (OpenAI-compatible)</option>
+        </select>
+      </div>
+
+      <!-- Base URL -->
+      <div class="form-group">
+        <label class="form-label">URL Base do Provedor</label>
+        <input type="text" id="cfgBaseURL" class="form-input" placeholder="https://openrouter.ai/api/v1">
+      </div>
+
+      <!-- API Key -->
+      <div class="form-group">
+        <label class="form-label">API Key</label>
+        <div class="input-with-action">
+          <input type="password" id="cfgAPIKey" class="form-input" placeholder="sk-or-... ou sua chave">
+          <button id="btnToggleKey" class="sm-btn" type="button">👁️</button>
+        </div>
+      </div>
+
+      <!-- Microfone -->
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label class="form-label">Microfone de Gravação</label>
+          <button id="btnRefreshMics" class="sm-btn" type="button" style="padding: 2px 6px;">🔄 Atualizar</button>
+        </div>
+        <select id="cfgMicrophone" class="form-select">
+          <option value="default">Microfone Padrão do Sistema</option>
+        </select>
+      </div>
+
+      <!-- Modelo de Áudio -->
+      <div class="form-group">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <label class="form-label">Modelo de Transcrição (Áudio)</label>
+          <button id="btnFetchModels" class="sm-btn" type="button" style="padding: 2px 6px;">🔍 Buscar Modelos</button>
+        </div>
+        <input type="text" id="cfgAudioModel" class="form-input" list="audioModelList" placeholder="Ex: google/gemini-2.5-flash">
+        <datalist id="audioModelList"></datalist>
+      </div>
+
+      <!-- Modelo de Reescrita -->
+      <div class="form-group">
+        <label class="form-label">Modelo de Reescrita (Texto)</label>
+        <input type="text" id="cfgRewriteModel" class="form-input" list="rewriteModelList" placeholder="Ex: google/gemini-2.5-flash">
+        <datalist id="rewriteModelList"></datalist>
+      </div>
+
+      <!-- Ajuste Fino de Gravação -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <div class="form-group">
+          <label class="form-label">Tempo Mín. Bloco (seg)</label>
+          <input type="number" id="cfgMinChunk" class="form-input" value="20" min="5" max="60">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tempo Máx. Bloco (seg)</label>
+          <input type="number" id="cfgMaxChunk" class="form-input" value="35" min="10" max="120">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="btnCancelSettings" class="btn-secondary" type="button">Cancelar</button>
+        <button id="btnSaveSettings" class="btn-save" type="button">Salvar Configurações</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

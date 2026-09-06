@@ -1,0 +1,14 @@
+﻿{
+  "provider": "openrouter",
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_key": "SUA_API_KEY_AQUI",
+  "last_audio_model": "google/gemini-2.5-flash",
+  "last_rewrite_model": "google/gemini-2.5-flash",
+  "selected_microphone": "default",
+  "chunk_seconds": 30,
+  "min_chunk_seconds": 20,
+  "max_chunk_seconds": 35,
+  "silence_pause_seconds": 0.45,
+  "silence_threshold": 0.012,
+  "sample_rate": 16000
+}
