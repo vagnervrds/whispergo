@@ -33,7 +33,6 @@
         </div>
         <div class="timer-text">
           <span id="timerDisplay" class="active-timer">00:00</span>
-          <span id="chunkThresholdDisplay" class="timer-threshold">/ 20s</span>
           <span id="pauseNotice" class="pause-tag" style="display:none;">[ouvindo pausa]</span>
         </div>
       </div>
@@ -71,11 +70,19 @@
         <div class="modal-title">📜 Histórico da Sessão</div>
         <button id="btnCloseHistory" class="icon-btn" style="border:none;">✕</button>
       </div>
+
+      <!-- Status de Arquivo Salvo -->
+      <div id="saveToast" class="save-toast" style="display: none;"></div>
+
       <div id="historyList" class="history-list">
         <div class="empty-history">Nenhuma gravação realizada nesta sessão ainda.</div>
       </div>
+
       <div class="modal-footer" style="justify-content: space-between;">
-        <button id="btnClearHistory" class="sm-btn" type="button">🗑️ Limpar</button>
+        <div style="display: flex; gap: 6px;">
+          <button id="btnSaveAllHistory" class="sm-btn" type="button" title="Salvar todas em um único arquivo .txt">💾 Salvar Tudo</button>
+          <button id="btnClearHistory" class="sm-btn" type="button" title="Limpar histórico da sessão">🗑️ Limpar</button>
+        </div>
         <button id="btnCloseHistoryBtn" class="btn-secondary" type="button">Fechar</button>
       </div>
     </div>
@@ -107,7 +114,7 @@
       <div class="form-group">
         <label class="form-label">URL Base do Provedor</label>
         <input type="text" id="cfgBaseURL" class="form-input" placeholder="Ex: https://openrouter.ai/api/v1">
-        <span class="field-hint">Defina a URL do seu servidor de IA (ex: OpenRouter, vLLM, Ollama, etc.)</span>
+        <span class="field-hint">Defina a URL do servidor de IA (ex: OpenRouter, vLLM, Ollama, etc.)</span>
       </div>
 
       <!-- API Key -->

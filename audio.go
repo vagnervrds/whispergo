@@ -25,16 +25,16 @@ type AudioChunk struct {
 }
 
 type AudioRecorder struct {
-	ctx         *malgo.AllocatedContext
-	device      *malgo.Device
-	cfg         Config
-	isRecording atomic.Bool
-	stopChan    chan struct{}
-	chunkChan   chan AudioChunk
-	mu          sync.Mutex
-	currentVol  atomic.Value // float64
-	currentSec  atomic.Value // float64
-	targetDevID *malgo.DeviceID
+	ctx                  *malgo.AllocatedContext
+	device               *malgo.Device
+	cfg                  Config
+	isRecording          atomic.Bool
+	stopChan             chan struct{}
+	chunkChan            chan AudioChunk
+	mu                   sync.Mutex
+	currentVol           atomic.Value // float64
+	totalSamplesRecorded atomic.Int64 // monotonic counter
+	targetDevID          *malgo.DeviceID
 }
 
 func NewAudioRecorder(cfg Config) *AudioRecorder {
@@ -44,7 +44,6 @@ func NewAudioRecorder(cfg Config) *AudioRecorder {
 		stopChan:  make(chan struct{}),
 	}
 	r.currentVol.Store(float64(0))
-	r.currentSec.Store(float64(0))
 	return r
 }
 
@@ -83,7 +82,7 @@ func ListMicrophones() ([]AudioDevice, error) {
 }
 
 // Start inicia a captura de áudio com chunking inteligente contínuo
-func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPauseWait bool)) error {
+func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, totalSec float64, isPauseWait bool)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -130,8 +129,7 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 	rawSamplesChan := make(chan []float32, 500)
 	r.stopChan = make(chan struct{})
 	r.isRecording.Store(true)
-
-	var totalSamplesReceived int64
+	r.totalSamplesRecorded.Store(0)
 
 	onRecvFrames := func(pOutput, pInput []byte, frameCount uint32) {
 		if !r.isRecording.Load() || frameCount == 0 {
@@ -158,7 +156,7 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 		rms := math.Sqrt(sumSq / float64(n))
 		normVol := math.Min(1.0, rms*18.0)
 		r.currentVol.Store(normVol)
-		atomic.AddInt64(&totalSamplesReceived, int64(n))
+		r.totalSamplesRecorded.Add(int64(n))
 
 		select {
 		case rawSamplesChan <- samples:
@@ -194,7 +192,7 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 	return nil
 }
 
-func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint32, onVolumeUpdate func(vol float64, sec float64, isPauseWait bool)) {
+func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint32, onVolumeUpdate func(vol float64, totalSec float64, isPauseWait bool)) {
 	var buffer []float32
 	chunkIndex := 1
 	var accumulatedSilence float64
@@ -270,14 +268,14 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 				accumulatedSilence = 0
 			}
 
-			elapsedSec := float64(len(buffer)) / float64(sampleRate)
-			r.currentSec.Store(elapsedSec)
+			// Duração do bloco ATUAL para corte VAD
+			chunkElapsedSec := float64(len(buffer)) / float64(sampleRate)
 
-			pauseDetected := elapsedSec >= minChunkSec && accumulatedSilence >= silencePauseSec
-			limitReached := elapsedSec >= maxChunkSec
+			pauseDetected := chunkElapsedSec >= minChunkSec && accumulatedSilence >= silencePauseSec
+			limitReached := chunkElapsedSec >= maxChunkSec
 
 			if pauseDetected || limitReached {
-				reason := fmt.Sprintf("Pausa detectada (%.1fs, silêncio acumulado: %.2fs)", elapsedSec, accumulatedSilence)
+				reason := fmt.Sprintf("Pausa detectada (%.1fs, silêncio acumulado: %.2fs)", chunkElapsedSec, accumulatedSilence)
 				if limitReached {
 					reason = fmt.Sprintf("Limite máximo de %.0fs atingido", maxChunkSec)
 				}
@@ -288,7 +286,6 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 				copy(chunkToSend, buffer)
 				buffer = nil
 				accumulatedSilence = 0
-				r.currentSec.Store(float64(0))
 
 				r.chunkChan <- AudioChunk{
 					Index:   chunkIndex,
@@ -302,15 +299,19 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 		case <-ticker.C:
 			if onVolumeUpdate != nil && r.isRecording.Load() {
 				vol, _ := r.currentVol.Load().(float64)
-				sec, _ := r.currentSec.Load().(float64)
-				isPauseWait := sec >= minChunkSec
-				onVolumeUpdate(vol, sec, isPauseWait)
+				// TEMPO TOTAL MONOTÔNICO DA GRAVAÇÃO ATUAL
+				totalSamples := r.totalSamplesRecorded.Load()
+				totalSec := float64(totalSamples) / float64(sampleRate)
+
+				chunkElapsedSec := float64(len(buffer)) / float64(sampleRate)
+				isPauseWait := chunkElapsedSec >= minChunkSec
+				onVolumeUpdate(vol, totalSec, isPauseWait)
 			}
 		}
 	}
 }
 
-// Stop finaliza a gravação
+// Stop finaliza a gravação física imediatamente
 func (r *AudioRecorder) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

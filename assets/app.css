@@ -541,3 +541,13 @@ canvas#waveform {
   text-align: center;
   padding: 20px 0;
 }
+
+.save-toast {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10b981;
+  color: #34d399;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: center;
+}

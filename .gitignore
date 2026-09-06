@@ -4,6 +4,10 @@ config.json
 
 # Saidas e transcricoes de audio
 transcricao_final.txt
+transcricoes/
+transcricao_*.txt
+sessao_*.txt
+gravacao_*.txt
 *.wav
 *.mp3
 *.m4a

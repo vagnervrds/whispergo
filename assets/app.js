@@ -1,4 +1,4 @@
-﻿// WhisperGo UI Logic - Ultra Compact & Polished
+﻿// WhisperGo UI Logic - Non-blocking Queue & Session History Export
 
 let isRecording = false;
 let currentConfig = null;
@@ -11,7 +11,6 @@ const btnRecord = document.getElementById("btnRecord");
 const statusPill = document.getElementById("statusPill");
 const statusText = document.getElementById("statusText");
 const timerDisplay = document.getElementById("timerDisplay");
-const chunkThresholdDisplay = document.getElementById("chunkThresholdDisplay");
 const pauseNotice = document.getElementById("pauseNotice");
 const buildBadge = document.getElementById("buildBadge");
 const resultBox = document.getElementById("resultBox");
@@ -25,7 +24,9 @@ const historyModal = document.getElementById("historyModal");
 const btnCloseHistory = document.getElementById("btnCloseHistory");
 const btnCloseHistoryBtn = document.getElementById("btnCloseHistoryBtn");
 const btnClearHistory = document.getElementById("btnClearHistory");
+const btnSaveAllHistory = document.getElementById("btnSaveAllHistory");
 const historyList = document.getElementById("historyList");
+const saveToast = document.getElementById("saveToast");
 
 // Configurações Modal
 const btnSettings = document.getElementById("btnSettings");
@@ -93,7 +94,7 @@ function drawWaveform() {
       gradient.addColorStop(1, "#f97316");
       ctx.fillStyle = gradient;
     } else {
-      // Idle pulse sutil e elegante
+      // Idle pulse sutil
       const pulse = 2 + Math.sin(time + i * 0.25) * 1.5;
       barHeight = Math.max(3, pulse);
       ctx.fillStyle = "#25334d";
@@ -108,7 +109,7 @@ function drawWaveform() {
   animFrameId = requestAnimationFrame(drawWaveform);
 }
 
-// Botão Iniciar / Parar
+// Botão Iniciar / Parar com Fila Não-Bloqueante
 btnRecord.addEventListener("click", async () => {
   if (!isRecording) {
     // Verificação de API Key antes de começar
@@ -123,17 +124,18 @@ btnRecord.addEventListener("click", async () => {
         if (res.error === "API_KEY_REQUIRED") {
           openSettingsModal(true);
         } else {
-          alert("Erro: " + (res.message || res.error));
+          alert("Aviso: " + (res.message || res.error));
         }
         return;
       }
     }
     setRecordingState(true);
   } else {
+    // Para a gravação atual e envia para a fila em segundo plano
     setRecordingState(false);
-    updateStatus("Polindo texto...", "processing");
+    updateStatus("Enviado para a fila...", "processing");
     if (window.stopRecording) {
-      await window.stopRecording();
+      window.stopRecording(); // Executa em background sem bloquear a UI!
     }
   }
 });
@@ -145,9 +147,12 @@ function setRecordingState(recording) {
     btnRecord.innerHTML = "<span>⏹</span> Finalizar e Polir";
     updateStatus("Gravando...", "recording");
     timerDisplay.innerText = "00:00";
+    pauseNotice.style.display = "none";
   } else {
     btnRecord.className = "btn-primary btn-record";
     btnRecord.innerHTML = "<span>▶</span> Iniciar Gravação";
+    timerDisplay.innerText = "00:00";
+    pauseNotice.style.display = "none";
   }
 }
 
@@ -157,35 +162,35 @@ function updateStatus(text, type) {
 }
 
 // Callbacks do Backend Go
-window.onVolumeUpdate = function(vol, sec, isPauseWait) {
+window.onVolumeUpdate = function(vol, totalSec, isPauseWait) {
   currentVolume = vol;
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  timerDisplay.innerText = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  pauseNotice.style.display = isPauseWait ? "inline" : "none";
-};
-
-window.onChunkTranscribed = function(chunkIndex, text) {
-  if (text && text.trim()) {
-    updateStatus(`Bloco ${chunkIndex} transcrito`, "processing");
+  if (isRecording) {
+    const m = Math.floor(totalSec / 60);
+    const s = Math.floor(totalSec % 60);
+    timerDisplay.innerText = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    pauseNotice.style.display = isPauseWait ? "inline" : "none";
   }
 };
 
 window.onStatusChange = function(status, type) {
-  updateStatus(status, type);
+  if (!isRecording) {
+    updateStatus(status, type);
+  }
 };
 
-window.onFinalTextReady = function(rawText, polishedText) {
-  finalTextPreview.innerText = polishedText;
+// Disparado quando uma gravação da fila conclui o polimento final
+window.onSessionFinished = function(finalText, timeStr) {
+  finalTextPreview.innerText = finalText;
   resultBox.style.display = "flex";
-  updateStatus("Copiado!", "success");
-  setRecordingState(false);
+  if (!isRecording) {
+    updateStatus("Copiado!", "success");
+  }
 
-  // Adiciona ao Histórico da Sessão
+  // Registra no histórico da sessão
   sessionHistory.unshift({
     id: Date.now(),
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    text: polishedText
+    time: timeStr,
+    text: finalText
   });
   updateHistoryUI();
 };
@@ -210,6 +215,7 @@ btnCopy.addEventListener("click", async () => {
 // Modal de Histórico da Sessão
 btnHistory.addEventListener("click", () => {
   historyModal.classList.add("active");
+  hideToast();
 });
 btnCloseHistory.addEventListener("click", () => {
   historyModal.classList.remove("active");
@@ -220,7 +226,42 @@ btnCloseHistoryBtn.addEventListener("click", () => {
 btnClearHistory.addEventListener("click", () => {
   sessionHistory = [];
   updateHistoryUI();
+  hideToast();
 });
+
+// Salvar toda a sessão em um único arquivo
+btnSaveAllHistory.addEventListener("click", async () => {
+  if (sessionHistory.length === 0) {
+    alert("Não há gravações na sessão para salvar.");
+    return;
+  }
+  let combined = "";
+  sessionHistory.forEach((item, idx) => {
+    combined += `-----------------------------------------------------\n` +
+      `Gravação #${sessionHistory.length - idx} [${item.time}]\n` +
+      `-----------------------------------------------------\n` +
+      `${item.text}\n\n`;
+  });
+
+  if (window.saveSessionAll) {
+    const res = await window.saveSessionAll(combined);
+    if (res && res.success) {
+      showToast(`✓ Sessão completa salva em transcricoes/${res.filename}`);
+    } else {
+      alert("Erro ao salvar sessão: " + (res && res.error));
+    }
+  }
+});
+
+function showToast(msg) {
+  saveToast.innerText = msg;
+  saveToast.style.display = "block";
+  setTimeout(hideToast, 4000);
+}
+
+function hideToast() {
+  saveToast.style.display = "none";
+}
 
 function updateHistoryUI() {
   historyBadge.innerText = sessionHistory.length;
@@ -236,11 +277,15 @@ function updateHistoryUI() {
     el.innerHTML = `
       <div class="history-item-top">
         <span class="history-time">🕒 ${item.time}</span>
-        <button class="sm-btn btn-copy-hist" data-id="${item.id}">📋 Copiar</button>
+        <div style="display: flex; gap: 4px;">
+          <button class="sm-btn btn-copy-hist" data-id="${item.id}">📋 Copiar</button>
+          <button class="sm-btn btn-save-hist" data-id="${item.id}">💾 Salvar</button>
+        </div>
       </div>
       <div class="history-text">${escapeHtml(item.text)}</div>
     `;
 
+    // Botão Copiar individual
     const copyBtn = el.querySelector(".btn-copy-hist");
     copyBtn.addEventListener("click", async () => {
       if (window.copyToClipboard) {
@@ -248,12 +293,31 @@ function updateHistoryUI() {
       } else {
         navigator.clipboard.writeText(item.text);
       }
-      copyBtn.innerText = "✓ Copiado!";
+      copyBtn.innerText = "✓";
       copyBtn.classList.add("success");
       setTimeout(() => {
         copyBtn.innerText = "📋 Copiar";
         copyBtn.classList.remove("success");
       }, 1600);
+    });
+
+    // Botão Salvar individual
+    const saveBtn = el.querySelector(".btn-save-hist");
+    saveBtn.addEventListener("click", async () => {
+      if (window.saveSingleRecording) {
+        const res = await window.saveSingleRecording(item.text, item.time);
+        if (res && res.success) {
+          saveBtn.innerText = "✓";
+          saveBtn.classList.add("success");
+          showToast(`✓ Salvo em transcricoes/${res.filename}`);
+          setTimeout(() => {
+            saveBtn.innerText = "💾 Salvar";
+            saveBtn.classList.remove("success");
+          }, 2000);
+        } else {
+          alert("Erro ao salvar arquivo: " + (res && res.error));
+        }
+      }
     });
 
     historyList.appendChild(el);
@@ -299,7 +363,6 @@ function populateSettings(cfg) {
   cfgAPIKey.value = cfg.api_key || "";
   cfgAudioModel.value = cfg.last_audio_model || "google/gemini-2.5-flash";
   cfgRewriteModel.value = cfg.last_rewrite_model || "google/gemini-2.5-flash";
-  chunkThresholdDisplay.innerText = ` / ${cfg.min_chunk_seconds || 20}s`;
 
   updateProviderHints(cfgProvider.value);
 }
@@ -400,7 +463,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (window.getConfig) {
     const jsonStr = await window.getConfig();
     currentConfig = JSON.parse(jsonStr);
-    chunkThresholdDisplay.innerText = ` / ${currentConfig.min_chunk_seconds || 20}s`;
   }
   if (window.getAppInfo) {
     const info = JSON.parse(await window.getAppInfo());

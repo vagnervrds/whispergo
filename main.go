@@ -26,9 +26,6 @@ var (
 	BuildNumber      = "1"
 	activeRecorder   *AudioRecorder
 	recorderMutex    sync.Mutex
-	workerDoneChan   chan struct{}
-	transcribedTexts []string
-	textsMutex       sync.Mutex
 )
 
 func getEffectiveBuildNumber() string {
@@ -162,6 +159,51 @@ func main() {
 		return err == nil
 	})
 
+	// Binding: saveSingleRecording
+	w.Bind("saveSingleRecording", func(text string, timeStr string) map[string]any {
+		_ = os.MkdirAll("transcricoes", 0755)
+		now := time.Now()
+		millis := now.Nanosecond() / 1e6
+		filename := fmt.Sprintf("gravacao_%04d-%02d-%02d_%02d-%02d-%02d-%03d.txt",
+			now.Year(), now.Month(), now.Day(),
+			now.Hour(), now.Minute(), now.Second(), millis)
+		filePath := filepath.Join("transcricoes", filename)
+
+		header := fmt.Sprintf("=== WhisperGo - Gravação [%s] ===\n\n", timeStr)
+		err := os.WriteFile(filePath, []byte(header+text+"\n"), 0644)
+		if err != nil {
+			LogError(err, "Falha ao salvar gravação individual em %s", filePath)
+			return map[string]any{"success": false, "error": err.Error()}
+		}
+		LogInfo("Gravação individual salva em: %s", filePath)
+		return map[string]any{"success": true, "filename": filename, "path": filePath}
+	})
+
+	// Binding: saveSessionAll
+	w.Bind("saveSessionAll", func(content string) map[string]any {
+		_ = os.MkdirAll("transcricoes", 0755)
+		now := time.Now()
+		millis := now.Nanosecond() / 1e6
+		filename := fmt.Sprintf("sessao_%04d-%02d-%02d_%02d-%02d-%02d-%03d.txt",
+			now.Year(), now.Month(), now.Day(),
+			now.Hour(), now.Minute(), now.Second(), millis)
+		filePath := filepath.Join("transcricoes", filename)
+
+		header := fmt.Sprintf("=====================================================\n"+
+			"         WhisperGo - Sessão Completa de Gravações    \n"+
+			"         Data: %s                                     \n"+
+			"=====================================================\n\n",
+			now.Format("02/01/2006 15:04:05"))
+
+		err := os.WriteFile(filePath, []byte(header+content+"\n"), 0644)
+		if err != nil {
+			LogError(err, "Falha ao salvar sessão completa em %s", filePath)
+			return map[string]any{"success": false, "error": err.Error()}
+		}
+		LogInfo("Sessão completa salva em: %s", filePath)
+		return map[string]any{"success": true, "filename": filename, "path": filePath}
+	})
+
 	// Binding: getAppInfo
 	w.Bind("getAppInfo", func() string {
 		info := map[string]string{
@@ -176,6 +218,10 @@ func main() {
 		recorderMutex.Lock()
 		defer recorderMutex.Unlock()
 
+		if activeRecorder != nil {
+			return map[string]string{"error": "ALREADY_RECORDING", "message": "Já existe uma gravação ativa"}
+		}
+
 		currentCfg := LoadConfig()
 
 		// VERIFICAÇÃO CRÍTICA: API Key obrigatória antes de gravar!
@@ -189,16 +235,9 @@ func main() {
 
 		rec := NewAudioRecorder(currentCfg)
 
-		textsMutex.Lock()
-		transcribedTexts = nil
-		textsMutex.Unlock()
-
-		done := make(chan struct{})
-		workerDoneChan = done
-
-		onVol := func(vol float64, sec float64, isPauseWait bool) {
+		onVol := func(vol float64, totalSec float64, isPauseWait bool) {
 			w.Dispatch(func() {
-				w.Eval(fmt.Sprintf("window.onVolumeUpdate(%f, %f, %t);", vol, sec, isPauseWait))
+				w.Eval(fmt.Sprintf("window.onVolumeUpdate(%f, %f, %t);", vol, totalSec, isPauseWait))
 			})
 		}
 
@@ -208,20 +247,44 @@ func main() {
 		}
 
 		activeRecorder = rec
+		LogInfo("Gravação iniciada com sucesso")
 
-		// Goroutine assíncrona consumindo e transcrevendo blocos
-		go func(r *AudioRecorder, c Config, d chan struct{}) {
-			defer close(d)
+		return map[string]string{"status": "ok"}
+	})
+
+	// Binding: stopRecording
+	// Libera a gravação imediatamente para permitir que o usuário inicie outra gravação em seguida sem travar!
+	w.Bind("stopRecording", func() bool {
+		recorderMutex.Lock()
+		rec := activeRecorder
+		activeRecorder = nil
+		recorderMutex.Unlock()
+
+		if rec == nil {
+			return false
+		}
+
+		currentCfg := LoadConfig()
+		sessionStartTime := time.Now().Format("15:04:05")
+
+		// Despacha o processamento em background independente para esta sessão!
+		go func(r *AudioRecorder, cfg Config, sessTime string) {
+			LogInfo("Iniciando fila de processamento em background para gravação de [%s]", sessTime)
+
+			// Para a gravação física (libera o microfone para a próxima gravação!)
+			r.Stop()
+
+			var sessionTexts []string
 			tempDir := os.TempDir()
 
 			for chunk := range r.chunkChan {
-				LogInfo("Iniciando transcrição do Bloco %d (%d amostras, Final: %t, Motivo: %s)",
+				LogInfo("Fila: processando Bloco %d (%d amostras, Final: %t, Motivo: %s)",
 					chunk.Index, len(chunk.Samples), chunk.IsFinal, chunk.Reason)
 
 				rawWav := filepath.Join(tempDir, fmt.Sprintf("whisper_raw_%d_%d.wav", time.Now().UnixNano(), chunk.Index))
 				cleanWav := filepath.Join(tempDir, fmt.Sprintf("whisper_clean_%d_%d.wav", time.Now().UnixNano(), chunk.Index))
 
-				if err := WriteWavFile(rawWav, chunk.Samples, c.SampleRate); err != nil {
+				if err := WriteWavFile(rawWav, chunk.Samples, cfg.SampleRate); err != nil {
 					LogError(err, "Falha ao gravar arquivo WAV temporário %s", rawWav)
 					continue
 				}
@@ -234,74 +297,28 @@ func main() {
 					LogWarn("FFmpeg não reduziu o áudio do Bloco %d. Usando WAV original.", chunk.Index)
 				}
 
-				w.Dispatch(func() {
-					w.Eval(fmt.Sprintf("window.onStatusChange('Transcrevendo Bloco %d...', 'processing');", chunk.Index))
-				})
-
-				text, err := TranscribeAudio(wavToSend, c.LastAudioModel, c)
+				text, err := TranscribeAudio(wavToSend, cfg.LastAudioModel, cfg)
 				if err != nil {
 					LogError(err, "Erro ao transcrever Bloco %d", chunk.Index)
 				}
 
-				// Remove arquivos temporários
 				_ = os.Remove(rawWav)
 				_ = os.Remove(cleanWav)
 
 				if strings.TrimSpace(text) != "" {
 					LogInfo("Bloco %d transcrito com sucesso: \"%s\"", chunk.Index, text)
-					textsMutex.Lock()
-					transcribedTexts = append(transcribedTexts, text)
-					textsMutex.Unlock()
-
-					escapedText, _ := json.Marshal(text)
-					w.Dispatch(func() {
-						w.Eval(fmt.Sprintf("window.onChunkTranscribed(%d, %s);", chunk.Index, string(escapedText)))
-					})
+					sessionTexts = append(sessionTexts, text)
 				} else {
 					LogInfo("Bloco %d finalizado sem falas identificadas", chunk.Index)
 				}
 			}
-			LogInfo("Worker de transcrição processou todos os blocos")
-		}(rec, currentCfg, done)
 
-		return map[string]string{"status": "ok"}
-	})
-
-	// Binding: stopRecording
-	w.Bind("stopRecording", func() bool {
-		recorderMutex.Lock()
-		rec := activeRecorder
-		activeRecorder = nil
-		doneChan := workerDoneChan
-		recorderMutex.Unlock()
-
-		if rec == nil {
-			return false
-		}
-
-		currentCfg := LoadConfig()
-
-		go func() {
-			w.Dispatch(func() {
-				w.Eval("window.onStatusChange('Finalizando gravação e processando blocos...', 'processing');")
-			})
-
-			// Para a gravação física (esvazia buffer e envia o bloco final)
-			rec.Stop()
-
-			// Aguarda o worker terminar de transcrever todos os blocos pendentes
-			if doneChan != nil {
-				<-doneChan
-			}
-
-			textsMutex.Lock()
-			fullRaw := strings.Join(transcribedTexts, " ")
-			textsMutex.Unlock()
-
-			LogInfo("Gravação encerrada. Texto bruto acumulado (%d caracteres): \"%s\"", len(fullRaw), fullRaw)
+			fullRaw := strings.Join(sessionTexts, " ")
+			LogInfo("Todos os blocos da gravação [%s] foram transcritos. Texto bruto (%d caracteres): \"%s\"",
+				sessTime, len(fullRaw), fullRaw)
 
 			if strings.TrimSpace(fullRaw) == "" {
-				LogWarn("Nenhuma fala identificada ao encerrar gravação")
+				LogWarn("Nenhuma fala identificada na gravação de [%s]", sessTime)
 				w.Dispatch(func() {
 					w.Eval("window.onStatusChange('Nenhuma fala identificada.', '');")
 				})
@@ -309,15 +326,15 @@ func main() {
 			}
 
 			w.Dispatch(func() {
-				w.Eval("window.onStatusChange('Reescrevendo e polindo texto...', 'processing');")
+				w.Eval("window.onStatusChange('Polindo texto...', 'processing');")
 			})
 
-			finalText, err := RewriteText(fullRaw, currentCfg.LastRewriteModel, currentCfg)
+			finalText, err := RewriteText(fullRaw, cfg.LastRewriteModel, cfg)
 			if err != nil || strings.TrimSpace(finalText) == "" {
 				LogError(err, "Falha ao reescrever texto. Utilizando texto bruto.")
 				finalText = fullRaw
 			} else {
-				LogInfo("Texto polido e reescrito com sucesso (%d caracteres)", len(finalText))
+				LogInfo("Texto polido e reescrito com sucesso para [%s] (%d caracteres)", sessTime, len(finalText))
 			}
 
 			// Copia para a área de transferência
@@ -326,15 +343,14 @@ func main() {
 
 			// Salva em transcricao_final.txt
 			_ = os.WriteFile("transcricao_final.txt", []byte(finalText+"\n"), 0644)
-			LogInfo("Texto gravado em transcricao_final.txt")
 
-			escapedRaw, _ := json.Marshal(fullRaw)
 			escapedFinal, _ := json.Marshal(finalText)
+			escapedTime, _ := json.Marshal(sessTime)
 
 			w.Dispatch(func() {
-				w.Eval(fmt.Sprintf("window.onFinalTextReady(%s, %s);", string(escapedRaw), string(escapedFinal)))
+				w.Eval(fmt.Sprintf("window.onSessionFinished(%s, %s);", string(escapedFinal), string(escapedTime)))
 			})
-		}()
+		}(rec, currentCfg, sessionStartTime)
 
 		return true
 	})
