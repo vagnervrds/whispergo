@@ -9,12 +9,12 @@ import (
 const ConfigFileName = "whisper_config.json"
 
 type Config struct {
-	Provider            string  `json:"provider"`
-	BaseURL             string  `json:"base_url"`
-	APIKey              string  `json:"api_key"`
-	LastAudioModel      string  `json:"last_audio_model"`
-	LastRewriteModel    string  `json:"last_rewrite_model"`
-	SelectedMicrophone  string  `json:"selected_microphone"`
+	Provider            string  `json:"provider"`              // "openai" ou "anthropic"
+	BaseURL             string  `json:"base_url"`              // URL definida pelo usuário
+	APIKey              string  `json:"api_key"`               // Chave da API
+	LastAudioModel      string  `json:"last_audio_model"`      // Modelo de transcrição
+	LastRewriteModel    string  `json:"last_rewrite_model"`    // Modelo de reescrita
+	SelectedMicrophone  string  `json:"selected_microphone"`   // Microfone em uso
 	ChunkSeconds        int     `json:"chunk_seconds"`
 	MinChunkSeconds     int     `json:"min_chunk_seconds"`
 	MaxChunkSeconds     int     `json:"max_chunk_seconds"`
@@ -25,8 +25,8 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Provider:            "openrouter",
-		BaseURL:             "https://openrouter.ai/api/v1",
+		Provider:            "openai",
+		BaseURL:             "",
 		APIKey:              "",
 		LastAudioModel:      "google/gemini-2.5-flash",
 		LastRewriteModel:    "google/gemini-2.5-flash",
@@ -35,7 +35,7 @@ func DefaultConfig() Config {
 		MinChunkSeconds:     20,
 		MaxChunkSeconds:     35,
 		SilencePauseSeconds: 0.45,
-		SilenceThreshold:    0.012,
+		SilenceThreshold:    0.008, // Sensibilidade aprimorada para captar fala mais sutil
 		SampleRate:          16000,
 	}
 }
@@ -58,46 +58,20 @@ func LoadConfig() Config {
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		// Tenta verificar se existe config.json alternativo
-		if altData, errAlt := os.ReadFile("config.json"); errAlt == nil {
-			var alt struct {
-				BaseURL       string `json:"base_url"`
-				APIKey        string `json:"api_key"`
-				SelectedModel string `json:"selected_model"`
-			}
-			if json.Unmarshal(altData, &alt) == nil {
-				if alt.BaseURL != "" {
-					cfg.BaseURL = alt.BaseURL
-				}
-				if alt.APIKey != "" {
-					cfg.APIKey = alt.APIKey
-				}
-				if alt.SelectedModel != "" {
-					cfg.LastRewriteModel = alt.SelectedModel
-				}
-			}
-		}
 		_ = SaveConfig(cfg)
 		return cfg
 	}
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
+		LogWarn("Falha ao desserializar %s: %v. Usando padrão.", configPath, err)
 		return cfg
 	}
 
-	// Garante valores mínimos e consistentes
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://openrouter.ai/api/v1"
+	// Normaliza provedores para apenas "openai" ou "anthropic"
+	if cfg.Provider != "openai" && cfg.Provider != "anthropic" {
+		cfg.Provider = "openai"
 	}
-	if cfg.Provider == "" {
-		cfg.Provider = "openrouter"
-	}
-	if cfg.LastAudioModel == "" {
-		cfg.LastAudioModel = "google/gemini-2.5-flash"
-	}
-	if cfg.LastRewriteModel == "" {
-		cfg.LastRewriteModel = "google/gemini-2.5-flash"
-	}
+
 	if cfg.SampleRate <= 0 {
 		cfg.SampleRate = 16000
 	}
@@ -111,7 +85,13 @@ func LoadConfig() Config {
 		cfg.SilencePauseSeconds = 0.45
 	}
 	if cfg.SilenceThreshold <= 0 {
-		cfg.SilenceThreshold = 0.012
+		cfg.SilenceThreshold = 0.008
+	}
+	if cfg.LastAudioModel == "" {
+		cfg.LastAudioModel = "google/gemini-2.5-flash"
+	}
+	if cfg.LastRewriteModel == "" {
+		cfg.LastRewriteModel = "google/gemini-2.5-flash"
 	}
 
 	return cfg
@@ -121,7 +101,14 @@ func SaveConfig(cfg Config) error {
 	configPath := getConfigPath()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
+		LogError(err, "Falha ao codificar configurações para JSON")
 		return err
 	}
-	return os.WriteFile(configPath, data, 0644)
+	err = os.WriteFile(configPath, data, 0644)
+	if err != nil {
+		LogError(err, "Falha ao gravar arquivo de configuração %s", configPath)
+	} else {
+		LogInfo("Configurações salvas com sucesso em %s (Provedor: %s, Microfone: %s)", configPath, cfg.Provider, cfg.SelectedMicrophone)
+	}
+	return err
 }

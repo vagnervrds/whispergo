@@ -25,6 +25,17 @@ type ChatCompletionResponse struct {
 	} `json:"error,omitempty"`
 }
 
+type AnthropicResponse struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
 type ModelsResponse struct {
 	Data []struct {
 		ID string `json:"id"`
@@ -32,33 +43,42 @@ type ModelsResponse struct {
 }
 
 var httpClient = &http.Client{
-	Timeout: 45 * time.Second,
+	Timeout: 50 * time.Second,
 }
 
-func buildHeaders(cfg Config) http.Header {
-	h := make(http.Header)
-	h.Set("Content-Type", "application/json")
-	h.Set("User-Agent", "WhisperGo/1.0")
-	h.Set("HTTP-Referer", "https://github.com/whispergo")
-	h.Set("X-Title", "WhisperGo")
-	if cfg.APIKey != "" {
-		h.Set("Authorization", "Bearer "+cfg.APIKey)
+func maskKey(k string) string {
+	if len(k) <= 8 {
+		return "***"
 	}
-	return h
+	return k[:4] + "..." + k[len(k)-4:]
 }
 
-// TranscribeAudio envia o áudio WAV em base64 para a API do modelo transcrever
+func getBaseURL(cfg Config) string {
+	u := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if u == "" {
+		return "https://openrouter.ai/api/v1"
+	}
+	return u
+}
+
+// TranscribeAudio envia o áudio WAV para a API do modelo transcrever
 func TranscribeAudio(wavPath string, modelName string, cfg Config) (string, error) {
 	audioBytes, err := os.ReadFile(wavPath)
 	if err != nil {
+		LogError(err, "Falha ao ler arquivo WAV: %s", wavPath)
 		return "", fmt.Errorf("falha ao ler wav: %w", err)
 	}
 	if len(audioBytes) < 1000 {
+		LogWarn("Arquivo WAV muito pequeno (%d bytes). Ignorando.", len(audioBytes))
 		return "", nil
 	}
 
 	b64Audio := base64.StdEncoding.EncodeToString(audioBytes)
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	baseURL := getBaseURL(cfg)
+	LogInfo("Iniciando transcrição de áudio (%d bytes base64) para o modelo '%s' via '%s'", len(b64Audio), modelName, baseURL)
+
+	// Se o provedor for Anthropic direto, a API nativa não possui suporte direto a WAV puro;
+	// No entanto, se o usuário estiver usando um proxy/gateway Anthropic ou formato compatível:
 	apiURL := baseURL + "/chat/completions"
 
 	// Formato 1: input_audio (OpenAI / OpenRouter padrão)
@@ -84,12 +104,15 @@ func TranscribeAudio(wavPath string, modelName string, cfg Config) (string, erro
 		},
 	}
 
-	text, err := sendChatCompletion(apiURL, payload1, cfg)
-	if err == nil && text != "" {
+	text, err := sendOpenAIRequest(apiURL, payload1, cfg)
+	if err == nil && strings.TrimSpace(text) != "" {
+		LogInfo("Transcrição com input_audio concluída com sucesso (%d caracteres)", len(text))
 		return text, nil
 	}
 
-	// Formato 2: data URL (fallback para modelos que aceitam data URL como imagem/multimodal)
+	LogWarn("Tentativa primária de transcrição falhou (%v). Tentando formato alternativo (data URL)...", err)
+
+	// Formato 2: data URL (fallback para modelos multimodais que aceitam áudio como data URI)
 	payload2 := map[string]any{
 		"model": modelName,
 		"messages": []any{
@@ -111,15 +134,17 @@ func TranscribeAudio(wavPath string, modelName string, cfg Config) (string, erro
 		},
 	}
 
-	textFallback, errFallback := sendChatCompletion(apiURL, payload2, cfg)
-	if errFallback == nil && textFallback != "" {
+	textFallback, errFallback := sendOpenAIRequest(apiURL, payload2, cfg)
+	if errFallback == nil && strings.TrimSpace(textFallback) != "" {
+		LogInfo("Transcrição fallback (data URL) concluída com sucesso (%d caracteres)", len(textFallback))
 		return textFallback, nil
 	}
 
-	if err != nil {
-		return "", err
+	if errFallback != nil {
+		LogError(errFallback, "Falha na transcrição do áudio com ambos os formatos")
+		return "", errFallback
 	}
-	return textFallback, errFallback
+	return text, err
 }
 
 // RewriteText envia o texto transcrito completo para pós-processamento e reescrita
@@ -128,8 +153,8 @@ func RewriteText(rawText string, modelName string, cfg Config) (string, error) {
 		return "", nil
 	}
 
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	apiURL := baseURL + "/chat/completions"
+	baseURL := getBaseURL(cfg)
+	LogInfo("Iniciando reescrita de texto (%d caracteres) com o modelo '%s' (Provedor: %s)", len(rawText), modelName, cfg.Provider)
 
 	promptSistema := "Você é um assistente de pós-processamento de fala e transcrição. " +
 		"Receberá o texto bruto falado que foi transcrito de um microfone em blocos. " +
@@ -138,6 +163,12 @@ func RewriteText(rawText string, modelName string, cfg Config) (string, error) {
 		"NÃO altere o significado nem acrescente ideias inexistentes. " +
 		"Retorne APENAS o texto final corrigido e polido."
 
+	if cfg.Provider == "anthropic" {
+		return sendAnthropicRequest(baseURL, modelName, promptSistema, rawText, cfg)
+	}
+
+	// Provedor padrão: OpenAI compatível
+	apiURL := baseURL + "/chat/completions"
 	payload := map[string]any{
 		"model": modelName,
 		"messages": []any{
@@ -152,35 +183,50 @@ func RewriteText(rawText string, modelName string, cfg Config) (string, error) {
 		},
 	}
 
-	return sendChatCompletion(apiURL, payload, cfg)
+	return sendOpenAIRequest(apiURL, payload, cfg)
 }
 
-func sendChatCompletion(apiURL string, payload map[string]any, cfg Config) (string, error) {
+func sendOpenAIRequest(apiURL string, payload map[string]any, cfg Config) (string, error) {
 	bodyJSON, err := json.Marshal(payload)
 	if err != nil {
+		LogError(err, "Falha ao serializar payload OpenAI")
 		return "", err
 	}
 
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(bodyJSON))
 	if err != nil {
+		LogError(err, "Falha ao criar requisição HTTP para %s", apiURL)
 		return "", err
 	}
-	req.Header = buildHeaders(cfg)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "WhisperGo/1.0")
+	req.Header.Set("HTTP-Referer", "https://github.com/whispergo")
+	req.Header.Set("X-Title", "WhisperGo")
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+
+	LogDebug("POST %s (Chave: %s)", apiURL, maskKey(cfg.APIKey))
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		LogError(err, "Erro na requisição HTTP para %s", apiURL)
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		LogError(err, "Erro ao ler resposta HTTP de %s", apiURL)
 		return "", err
 	}
 
 	var chatResp ChatCompletionResponse
 	if err := json.Unmarshal(respBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("resposta inválida da API: %s", string(respBytes))
+		errParse := fmt.Errorf("resposta inválida da API (Status %d): %s", resp.StatusCode, string(respBytes))
+		LogError(errParse, "Falha no parse JSON de %s", apiURL)
+		return "", errParse
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -190,30 +236,127 @@ func sendChatCompletion(apiURL string, payload map[string]any, cfg Config) (stri
 		} else {
 			errMsg += ": " + string(respBytes)
 		}
-		return "", errors.New(errMsg)
+		errApi := errors.New(errMsg)
+		LogError(errApi, "API retornou erro HTTP %d", resp.StatusCode)
+		return "", errApi
 	}
 
 	if len(chatResp.Choices) > 0 {
 		return strings.TrimSpace(chatResp.Choices[0].Message.Content), nil
 	}
 
+	LogWarn("Resposta da API sem choices. Conteúdo: %s", string(respBytes))
 	return "", nil
 }
 
-// FetchAvailableModels consulta o endpoint /models
+func sendAnthropicRequest(baseURL string, model string, systemPrompt string, rawText string, cfg Config) (string, error) {
+	apiURL := baseURL
+	if !strings.HasSuffix(apiURL, "/messages") {
+		if strings.HasSuffix(apiURL, "/v1") {
+			apiURL = apiURL + "/messages"
+		} else {
+			apiURL = apiURL + "/v1/messages"
+		}
+	}
+
+	payload := map[string]any{
+		"model":      model,
+		"max_tokens": 4096,
+		"system":     systemPrompt,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("Texto transcrito bruto:\n\n%s", rawText),
+			},
+		},
+	}
+
+	bodyJSON, err := json.Marshal(payload)
+	if err != nil {
+		LogError(err, "Falha ao serializar payload Anthropic")
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(bodyJSON))
+	if err != nil {
+		LogError(err, "Falha ao criar requisição Anthropic para %s", apiURL)
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", cfg.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("User-Agent", "WhisperGo/1.0")
+
+	LogDebug("POST %s (Anthropic, Chave: %s)", apiURL, maskKey(cfg.APIKey))
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		LogError(err, "Erro na requisição Anthropic para %s", apiURL)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		LogError(err, "Erro ao ler resposta Anthropic de %s", apiURL)
+		return "", err
+	}
+
+	var anthResp AnthropicResponse
+	if err := json.Unmarshal(respBytes, &anthResp); err != nil {
+		errParse := fmt.Errorf("resposta inválida da Anthropic (Status %d): %s", resp.StatusCode, string(respBytes))
+		LogError(errParse, "Falha no parse JSON de Anthropic")
+		return "", errParse
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		errMsg := fmt.Sprintf("Status HTTP %d", resp.StatusCode)
+		if anthResp.Error != nil && anthResp.Error.Message != "" {
+			errMsg += ": " + anthResp.Error.Message
+		} else {
+			errMsg += ": " + string(respBytes)
+		}
+		errApi := errors.New(errMsg)
+		LogError(errApi, "API Anthropic retornou erro")
+		return "", errApi
+	}
+
+	if len(anthResp.Content) > 0 {
+		for _, c := range anthResp.Content {
+			if c.Type == "text" && c.Text != "" {
+				return strings.TrimSpace(c.Text), nil
+			}
+		}
+	}
+
+	return "", nil
+}
+
+// FetchAvailableModels consulta o endpoint de modelos
 func FetchAvailableModels(cfg Config) ([]string, error) {
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	baseURL := getBaseURL(cfg)
 	apiURL := baseURL + "/models"
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		LogError(err, "Falha ao criar requisição /models")
+		return getFallbackModels(cfg.Provider), err
 	}
-	req.Header = buildHeaders(cfg)
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "WhisperGo/1.0")
+	if cfg.Provider == "anthropic" {
+		req.Header.Set("x-api-key", cfg.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		LogWarn("Não foi possível buscar modelos em %s: %v. Usando modelos padrão.", apiURL, err)
 		return getFallbackModels(cfg.Provider), err
 	}
 	defer resp.Body.Close()
@@ -227,33 +370,31 @@ func FetchAvailableModels(cfg Config) ([]string, error) {
 					models = append(models, m.ID)
 				}
 			}
+			LogInfo("Obtidos %d modelos com sucesso de %s", len(models), apiURL)
 			return models, nil
 		}
 	}
 
+	LogWarn("Endpoint %s retornou status %d. Usando fallback.", apiURL, resp.StatusCode)
 	return getFallbackModels(cfg.Provider), nil
 }
 
 func getFallbackModels(provider string) []string {
-	if strings.Contains(strings.ToLower(provider), "openrouter") {
+	if provider == "anthropic" {
 		return []string{
-			"google/gemini-2.5-flash",
-			"google/gemini-2.5-pro",
-			"google/gemini-2.0-flash-001",
-			"openai/gpt-4o-audio-preview",
-			"openai/gpt-4o-mini",
-			"anthropic/claude-3.5-sonnet",
-			"meta-llama/llama-3.3-70b-instruct",
+			"claude-3-7-sonnet-20250219",
+			"claude-3-5-sonnet-20241022",
+			"claude-3-5-haiku-20241022",
+			"claude-3-opus-20240229",
 		}
 	}
 	return []string{
-		"gemini-3.7-flash-high",
-		"gemini-3.8-flash-high",
-		"gemini-3.1-pro-low",
-		"gemini-3.1-flash-lite",
-		"claude-sonnet-4-6",
-		"claude-opus-4-6-thinking",
-		"gpt-oss-120b-medium",
-		"grok-4.6",
+		"google/gemini-2.5-flash",
+		"google/gemini-2.5-pro",
+		"google/gemini-2.0-flash-001",
+		"openai/gpt-4o-audio-preview",
+		"openai/gpt-4o-mini",
+		"anthropic/claude-3.5-sonnet",
+		"meta-llama/llama-3.3-70b-instruct",
 	}
 }

@@ -45,6 +45,7 @@
       <button id="btnRecord" class="btn-primary btn-record">
         <span>▶</span> Iniciar Gravação
       </button>
+      <div class="key-hint">[Pressione ENTER para Gravar / Parar]</div>
     </div>
 
     <!-- Texto Final Reescrito -->
@@ -93,23 +94,23 @@
       <div class="form-group">
         <label class="form-label">Provedor de IA</label>
         <select id="cfgProvider" class="form-select">
-          <option value="openrouter">OpenRouter (Padrão)</option>
-          <option value="proxyai">ProxyAI</option>
-          <option value="custom">Personalizado (OpenAI-compatible)</option>
+          <option value="openai">OpenAI compatível</option>
+          <option value="anthropic">Anthropic</option>
         </select>
       </div>
 
       <!-- Base URL -->
       <div class="form-group">
         <label class="form-label">URL Base do Provedor</label>
-        <input type="text" id="cfgBaseURL" class="form-input" placeholder="https://openrouter.ai/api/v1">
+        <input type="text" id="cfgBaseURL" class="form-input" placeholder="Ex: https://openrouter.ai/api/v1">
+        <span style="font-size: 10px; color: #64748b;">Informe a URL do servidor de IA (exemplo: OpenRouter, vLLM, Ollama, etc.)</span>
       </div>
 
       <!-- API Key -->
       <div class="form-group">
         <label class="form-label">API Key</label>
         <div class="input-with-action">
-          <input type="password" id="cfgAPIKey" class="form-input" placeholder="sk-or-... ou sua chave">
+          <input type="password" id="cfgAPIKey" class="form-input" placeholder="Sua chave de API secreta">
           <button id="btnToggleKey" class="sm-btn" type="button">👁️</button>
         </div>
       </div>

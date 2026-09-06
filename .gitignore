@@ -1,4 +1,4 @@
-﻿# Arquivos de configuracao pessoal e chaves de API
+# Arquivos de configuracao pessoal e chaves de API
 whisper_config.json
 config.json
 
@@ -31,3 +31,4 @@ temp/
 
 # Logs
 *.log
+log/

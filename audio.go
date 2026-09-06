@@ -25,16 +25,16 @@ type AudioChunk struct {
 }
 
 type AudioRecorder struct {
-	ctx          *malgo.AllocatedContext
-	device       *malgo.Device
-	cfg          Config
-	isRecording  atomic.Bool
-	stopChan     chan struct{}
-	chunkChan    chan AudioChunk
-	mu           sync.Mutex
-	currentVol   atomic.Value // float64
-	currentSec   atomic.Value // float64
-	isWaitingSec atomic.Bool
+	ctx         *malgo.AllocatedContext
+	device      *malgo.Device
+	cfg         Config
+	isRecording atomic.Bool
+	stopChan    chan struct{}
+	chunkChan   chan AudioChunk
+	mu          sync.Mutex
+	currentVol  atomic.Value // float64
+	currentSec  atomic.Value // float64
+	targetDevID *malgo.DeviceID
 }
 
 func NewAudioRecorder(cfg Config) *AudioRecorder {
@@ -52,12 +52,14 @@ func NewAudioRecorder(cfg Config) *AudioRecorder {
 func ListMicrophones() ([]AudioDevice, error) {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
+		LogError(err, "Falha ao inicializar malgo para listar microfones")
 		return nil, fmt.Errorf("falha ao inicializar malgo: %w", err)
 	}
 	defer ctx.Uninit()
 
 	devices, err := ctx.Devices(malgo.Capture)
 	if err != nil {
+		LogError(err, "Falha ao consultar dispositivos de captura")
 		return nil, fmt.Errorf("falha ao listar dispositivos de captura: %w", err)
 	}
 
@@ -76,6 +78,7 @@ func ListMicrophones() ([]AudioDevice, error) {
 			IsDefault: i == 0,
 		})
 	}
+	LogInfo("Detectados %d microfone(s) no sistema", len(list))
 	return list, nil
 }
 
@@ -88,8 +91,10 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 		return fmt.Errorf("gravação já em andamento")
 	}
 
+	LogInfo("Iniciando gravação de áudio...")
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
+		LogError(err, "Falha ao inicializar contexto de áudio miniaudio")
 		return fmt.Errorf("falha ao inicializar contexto de áudio: %w", err)
 	}
 	r.ctx = ctx
@@ -106,25 +111,41 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 	deviceConfig.Alsa.NoMMap = 1
 
 	// Seleção de dispositivo configurado
+	micName := "Padrão do Sistema"
 	if r.cfg.SelectedMicrophone != "" && r.cfg.SelectedMicrophone != "default" {
 		devs, _ := ctx.Devices(malgo.Capture)
 		for _, d := range devs {
 			if d.Name() == r.cfg.SelectedMicrophone {
-				deviceConfig.Capture.DeviceID = d.ID.Pointer()
+				devIDCopy := d.ID
+				r.targetDevID = &devIDCopy
+				deviceConfig.Capture.DeviceID = r.targetDevID.Pointer()
+				micName = d.Name()
 				break
 			}
 		}
 	}
 
+	LogInfo("Configurando dispositivo de captura: '%s' (Taxa: %dHz, 1 canal, Float32)", micName, sampleRate)
+
 	rawSamplesChan := make(chan []float32, 500)
 	r.stopChan = make(chan struct{})
 	r.isRecording.Store(true)
+
+	var totalSamplesReceived int64
 
 	onRecvFrames := func(pOutput, pInput []byte, frameCount uint32) {
 		if !r.isRecording.Load() || frameCount == 0 {
 			return
 		}
+
 		n := int(frameCount)
+		if len(pInput) < n*4 {
+			n = len(pInput) / 4
+		}
+		if n <= 0 {
+			return
+		}
+
 		samples := make([]float32, n)
 		var sumSq float64
 		for i := 0; i < n; i++ {
@@ -137,10 +158,12 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 		rms := math.Sqrt(sumSq / float64(n))
 		normVol := math.Min(1.0, rms*18.0)
 		r.currentVol.Store(normVol)
+		atomic.AddInt64(&totalSamplesReceived, int64(n))
 
 		select {
 		case rawSamplesChan <- samples:
 		default:
+			LogWarn("Fila de áudio cheia, frame descartado")
 		}
 	}
 
@@ -150,16 +173,20 @@ func (r *AudioRecorder) Start(onVolumeUpdate func(vol float64, sec float64, isPa
 
 	device, err := malgo.InitDevice(ctx.Context, deviceConfig, captureCallbacks)
 	if err != nil {
+		LogError(err, "Falha ao inicializar dispositivo de áudio miniaudio")
 		ctx.Uninit()
 		return fmt.Errorf("falha ao inicializar dispositivo de áudio: %w", err)
 	}
 	r.device = device
 
 	if err := device.Start(); err != nil {
+		LogError(err, "Falha ao iniciar stream de áudio")
 		device.Uninit()
 		ctx.Uninit()
 		return fmt.Errorf("falha ao iniciar stream de áudio: %w", err)
 	}
+
+	LogInfo("Stream de microfone iniciado com sucesso no hardware")
 
 	// Goroutine de chunking e detecção de pausas
 	go r.chunkingWorker(rawSamplesChan, sampleRate, onVolumeUpdate)
@@ -185,7 +212,7 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 	}
 	silenceThreshold := r.cfg.SilenceThreshold
 	if silenceThreshold <= 0 {
-		silenceThreshold = 0.012
+		silenceThreshold = 0.008
 	}
 
 	ticker := time.NewTicker(80 * time.Millisecond)
@@ -194,6 +221,7 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 	for {
 		select {
 		case <-r.stopChan:
+			LogInfo("Finalizando captura de áudio. Drenando buffers pendentes...")
 			// Esvazia as amostras pendentes
 			for {
 				select {
@@ -206,6 +234,7 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 		drained:
 			if len(buffer) > 0 {
 				dur := float64(len(buffer)) / float64(sampleRate)
+				LogInfo("Bloco final com duração: %.2fs (%d amostras)", dur, len(buffer))
 				if dur >= 0.3 {
 					r.chunkChan <- AudioChunk{
 						Index:   chunkIndex,
@@ -213,9 +242,12 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 						Reason:  fmt.Sprintf("Bloco Final ao encerrar (%.1fs)", dur),
 						IsFinal: true,
 					}
+				} else {
+					LogInfo("Bloco final muito curto (<0.3s). Descartado.")
 				}
 			}
 			close(r.chunkChan)
+			LogInfo("Canal de chunks fechado com sucesso")
 			return
 
 		case chunk, ok := <-rawChan:
@@ -245,10 +277,12 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 			limitReached := elapsedSec >= maxChunkSec
 
 			if pauseDetected || limitReached {
-				reason := fmt.Sprintf("Pausa detectada (%.1fs)", elapsedSec)
+				reason := fmt.Sprintf("Pausa detectada (%.1fs, silêncio acumulado: %.2fs)", elapsedSec, accumulatedSilence)
 				if limitReached {
 					reason = fmt.Sprintf("Limite máximo de %.0fs atingido", maxChunkSec)
 				}
+
+				LogInfo("Corte de Bloco %d: %s", chunkIndex, reason)
 
 				chunkToSend := make([]float32, len(buffer))
 				copy(chunkToSend, buffer)
@@ -276,15 +310,16 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 	}
 }
 
-// Stop finaliza a gravação e retorna o canal de chunks
-func (r *AudioRecorder) Stop() <-chan AudioChunk {
+// Stop finaliza a gravação
+func (r *AudioRecorder) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if !r.isRecording.Load() {
-		return r.chunkChan
+		return
 	}
 
+	LogInfo("Comando Stop recebido. Parando dispositivo de gravação...")
 	r.isRecording.Store(false)
 	close(r.stopChan)
 
@@ -295,6 +330,4 @@ func (r *AudioRecorder) Stop() <-chan AudioChunk {
 	if r.ctx != nil {
 		r.ctx.Uninit()
 	}
-
-	return r.chunkChan
 }

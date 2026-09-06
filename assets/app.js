@@ -48,6 +48,21 @@ const rewriteModelList = document.getElementById("rewriteModelList");
 const canvas = document.getElementById("waveform");
 const ctx = canvas.getContext("2d");
 
+// Atalho da Tecla ENTER para Iniciar / Parar Gravação
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const isModalOpen = settingsModal.classList.contains("active");
+    if (isModalOpen) return;
+
+    const activeEl = document.activeElement;
+    const tag = activeEl ? activeEl.tagName.toLowerCase() : "";
+    if (tag === "input" || tag === "textarea") return;
+
+    e.preventDefault();
+    btnRecord.click();
+  }
+});
+
 // Animação de Onda Contínua
 function drawWaveform() {
   const width = canvas.width;
@@ -243,30 +258,38 @@ async function openSettingsModal() {
 }
 
 function populateSettings(cfg) {
-  cfgProvider.value = cfg.provider || "openrouter";
-  cfgBaseURL.value = cfg.base_url || "https://openrouter.ai/api/v1";
+  cfgProvider.value = (cfg.provider === "anthropic") ? "anthropic" : "openai";
+  cfgBaseURL.value = cfg.base_url || "";
   cfgAPIKey.value = cfg.api_key || "";
   cfgAudioModel.value = cfg.last_audio_model || "google/gemini-2.5-flash";
   cfgRewriteModel.value = cfg.last_rewrite_model || "google/gemini-2.5-flash";
   cfgMinChunk.value = cfg.min_chunk_seconds || 20;
   cfgMaxChunk.value = cfg.max_chunk_seconds || 35;
   chunkThresholdDisplay.innerText = ` / ${cfg.min_chunk_seconds || 20}s`;
+
+  updateProviderHints(cfgProvider.value);
 }
 
 cfgProvider.addEventListener("change", () => {
-  const p = cfgProvider.value;
-  if (p === "openrouter") {
-    cfgBaseURL.value = "https://openrouter.ai/api/v1";
-    if (!cfgAudioModel.value || cfgAudioModel.value.includes("high")) {
+  updateProviderHints(cfgProvider.value);
+});
+
+function updateProviderHints(provider) {
+  if (provider === "anthropic") {
+    cfgBaseURL.placeholder = "Ex: https://api.anthropic.com";
+    if (!cfgRewriteModel.value || cfgRewriteModel.value.includes("gemini")) {
+      cfgRewriteModel.value = "claude-3-7-sonnet-20250219";
+    }
+  } else {
+    cfgBaseURL.placeholder = "Ex: https://openrouter.ai/api/v1";
+    if (!cfgAudioModel.value) {
       cfgAudioModel.value = "google/gemini-2.5-flash";
+    }
+    if (!cfgRewriteModel.value || cfgRewriteModel.value.includes("claude")) {
       cfgRewriteModel.value = "google/gemini-2.5-flash";
     }
-  } else if (p === "proxyai") {
-    cfgBaseURL.value = "https://proxyai.targetfollow.pro/v1";
-    cfgAudioModel.value = "gemini-3.7-flash-high";
-    cfgRewriteModel.value = "gemini-3.7-flash-high";
   }
-});
+}
 
 async function refreshMicrophones() {
   if (!window.listMicrophones) return;
@@ -301,7 +324,7 @@ btnFetchModels.addEventListener("click", async () => {
         opt2.value = m;
         rewriteModelList.appendChild(opt2);
       });
-      alert(`Encontrados ${models.length} modelos.`);
+      alert(`Encontrados ${models.length} modelos disponíveis.`);
     }
   } catch(e) {
     alert("Erro ao buscar modelos: " + e);
@@ -321,7 +344,7 @@ btnSaveSettings.addEventListener("click", async () => {
     min_chunk_seconds: parseInt(cfgMinChunk.value) || 20,
     max_chunk_seconds: parseInt(cfgMaxChunk.value) || 35,
     silence_pause_seconds: (currentConfig && currentConfig.silence_pause_seconds) || 0.45,
-    silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.012,
+    silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.008,
     sample_rate: (currentConfig && currentConfig.sample_rate) || 16000
   };
 

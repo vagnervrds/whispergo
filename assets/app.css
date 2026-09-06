@@ -527,3 +527,11 @@ canvas#waveform {
   background: #059669;
   color: #fff;
 }
+
+.key-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: -4px;
+  letter-spacing: 0.3px;
+}
