@@ -3,8 +3,8 @@
 > **Transcrição contínua de voz ultra-rápida e inteligente diretamente para a sua área de transferência.**  
 > Desenvolvido em **Golang** com interface nativa Dark Mode, processamento assíncrono de áudio e reescrita contextual via Inteligência Artificial.
 
-[![Download Release](https://img.shields.io/badge/Download-Releases_do_GitHub-10b981?style=for-the-badge&logo=github)](https://github.com/seu-usuario/whispergo/releases)
-[![Atalho Global](https://img.shields.io/badge/Atalho_Padrão-Ctrl_+_Alt_+_Win_+_R-3b82f6?style=for-the-badge)](https://github.com/seu-usuario/whispergo)
+[![Download Release](https://img.shields.io/badge/Download-Releases_do_GitHub-10b981?style=for-the-badge&logo=github)](https://github.com/vagnervrds/whispergo/releases)
+[![Atalho Global](https://img.shields.io/badge/Atalho_Padrão-Ctrl_+_Alt_+_Win_+_R-3b82f6?style=for-the-badge)](https://github.com/vagnervrds/whispergo)
 
 ---
 
