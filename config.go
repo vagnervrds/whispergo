@@ -22,6 +22,7 @@ type Config struct {
 	SilenceThreshold    float64 `json:"silence_threshold"`
 	SampleRate          int     `json:"sample_rate"`
 	GlobalHotkey        string  `json:"global_hotkey"`
+	SoundNotification   bool    `json:"sound_notification"`
 }
 
 func DefaultConfig() Config {
@@ -39,6 +40,7 @@ func DefaultConfig() Config {
 		SilenceThreshold:    0.008, // Sensibilidade aprimorada para captar fala mais sutil
 		SampleRate:          16000,
 		GlobalHotkey:        "Ctrl + Alt + Win + R",
+		SoundNotification:   true,
 	}
 }
 

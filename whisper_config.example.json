@@ -11,5 +11,6 @@
   "silence_pause_seconds": 0.45,
   "silence_threshold": 0.008,
   "sample_rate": 16000,
-  "global_hotkey": "Ctrl + Alt + Win + R"
+  "global_hotkey": "Ctrl + Alt + Win + R",
+  "sound_notification": true
 }

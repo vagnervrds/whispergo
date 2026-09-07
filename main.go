@@ -123,6 +123,9 @@ func main() {
 	}
 	defer w.Destroy()
 
+	// Garante tamanho inicial padronizado da área útil (modo compacto)
+	w.SetSize(360, 208, webview2.HintNone)
+
 	// Binding: setWindowSize para expandir e contrair a janela nativa
 	w.Bind("setWindowSize", func(width, height int) {
 		w.Dispatch(func() {
@@ -197,6 +200,11 @@ func main() {
 			LogError(err, "Falha ao copiar para clipboard")
 		}
 		return err == nil
+	})
+
+	// Binding: playNotificationSound
+	w.Bind("playNotificationSound", func() {
+		PlayNotificationSound()
 	})
 
 	// Binding: saveSingleRecording
@@ -390,6 +398,11 @@ func main() {
 
 			// Salva em transcricao_final.txt
 			_ = os.WriteFile("transcricao_final.txt", []byte(finalText+"\n"), 0644)
+
+			// Sinal sonoro agradável após conclusão da otimização do texto
+			if cfg.SoundNotification {
+				PlayNotificationSound()
+			}
 
 			escapedFinal, _ := json.Marshal(finalText)
 			escapedTime, _ := json.Marshal(sessTime)

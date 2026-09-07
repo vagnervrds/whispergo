@@ -13,6 +13,7 @@ gravacao_*.txt
 *.wav
 *.mp3
 *.m4a
+!assets/*.wav
 
 # Binarios executaveis
 *.exe

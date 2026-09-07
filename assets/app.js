@@ -52,6 +52,8 @@ const rewriteModelList = document.getElementById("rewriteModelList");
 const cfgHotkey = document.getElementById("cfgHotkey");
 const btnResetHotkey = document.getElementById("btnResetHotkey");
 const globalHotkeyHint = document.getElementById("globalHotkeyHint");
+const cfgSoundNotification = document.getElementById("cfgSoundNotification");
+const btnTestSound = document.getElementById("btnTestSound");
 
 // Canvas Waveform
 const canvas = document.getElementById("waveform");
@@ -88,7 +90,7 @@ function setPanel(panelName) {
     panelSettings.style.display = "none";
     btnToggleHistory.classList.remove("active");
     btnToggleSettings.classList.remove("active");
-    resizeNativeWindow(360, 250);
+    resizeNativeWindow(360, 208);
   }
 }
 
@@ -405,8 +407,19 @@ function populateSettings(cfg) {
   if (cfgHotkey) {
     cfgHotkey.value = cfg.global_hotkey || "Ctrl + Alt + Win + R";
   }
+  if (cfgSoundNotification) {
+    cfgSoundNotification.checked = (cfg.sound_notification !== false);
+  }
 
   updateProviderHints(cfgProvider.value);
+}
+
+if (btnTestSound) {
+  btnTestSound.addEventListener("click", () => {
+    if (window.playNotificationSound) {
+      window.playNotificationSound();
+    }
+  });
 }
 
 // Interatividade do Campo de Atalho Global
@@ -574,7 +587,8 @@ btnSaveSettings.addEventListener("click", async () => {
     silence_pause_seconds: (currentConfig && currentConfig.silence_pause_seconds) || 0.45,
     silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.008,
     sample_rate: (currentConfig && currentConfig.sample_rate) || 16000,
-    global_hotkey: (cfgHotkey && cfgHotkey.value.trim()) || "Ctrl + Alt + Win + R"
+    global_hotkey: (cfgHotkey && cfgHotkey.value.trim()) || "Ctrl + Alt + Win + R",
+    sound_notification: cfgSoundNotification ? cfgSoundNotification.checked : true
   };
 
   if (window.saveConfig) {
@@ -602,7 +616,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   if (window.getAppInfo) {
     const info = JSON.parse(await window.getAppInfo());
-    if (info.build) {
+    if (info.build && buildBadge) {
       buildBadge.innerText = `b${info.build}`;
     }
   }
