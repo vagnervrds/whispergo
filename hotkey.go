@@ -254,3 +254,23 @@ func (m *HotkeyManager) UpdateHotkey(newHotkey string) {
 
 	_, _, _ = procPostThreadMessage.Call(m.threadID, WM_RELOAD, 0, 0)
 }
+
+// Stop encerra o loop de escuta de atalhos e libera os atalhos registrados
+func (m *HotkeyManager) Stop() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	if !m.running {
+		m.mu.Unlock()
+		return
+	}
+	m.running = false
+	threadID := m.threadID
+	m.mu.Unlock()
+
+	if threadID != 0 {
+		_, _, _ = procPostThreadMessage.Call(threadID, WM_QUIT, 0, 0)
+	}
+}
+

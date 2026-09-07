@@ -20,6 +20,30 @@ CONFIG_FILENAME = "release_ai_config.json"
 CONFIG_EXAMPLE_FILENAME = "release_ai_config.example.json"
 
 
+def format_human_date(date_str):
+    """
+    Converte datas (ISO com offset/nanosegundos, ex: 2026-09-07T09:43:23.7818600-04:00)
+    para formato humano amigavel sem fuso horario (ex: 07/09/2026 09:43:23).
+    """
+    if not date_str:
+        return ""
+    date_str = str(date_str).strip()
+    # Remove qualquer fuso horario no final (ex: -04:00, +03:00, Z)
+    cleaned = re.sub(r"(?:[+-]\d{2}:\d{2}|Z)$", "", date_str)
+    # Remove fracoes de segundo (ex: .7818600)
+    cleaned = re.sub(r"\.\d+", "", cleaned)
+
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.datetime.strptime(cleaned, fmt)
+            if fmt == "%Y-%m-%d":
+                return dt.strftime("%d/%m/%Y")
+            return dt.strftime("%d/%m/%Y %H:%M:%S")
+        except ValueError:
+            continue
+    return cleaned
+
+
 def get_git_remote_repo():
     """Detecta automaticamente o repositorio GitHub configurado no Git remoto (origin)."""
     try:
@@ -44,7 +68,8 @@ def get_build_info():
                 with open(build_path, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
                     b_num = data.get("build")
-                    b_date = data.get("last_build_time") or data.get("date", "")
+                    raw_date = data.get("last_build_time") or data.get("date", "")
+                    b_date = format_human_date(raw_date)
                     if b_num is not None:
                         return {"build": str(b_num).strip(), "date": str(b_date).strip()}
             except Exception:
@@ -399,7 +424,9 @@ def cleanup_old_releases(keep=3, repo=None):
 def sync_git_and_push(build_num, build_date):
     """Verifica se ha arquivos nao commitados, realiza o commit com o numero da build e data atual, e faz o push para o repositorio remoto."""
     if not build_date:
-        build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        build_date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    else:
+        build_date = format_human_date(build_date)
 
     try:
         # 1. Verifica se ha arquivos nao commitados ou modificados
@@ -501,7 +528,7 @@ def main():
 
     meta = get_project_metadata()
     build_num = meta.get("build", "1")
-    build_date = meta.get("build_date", "")
+    build_date = format_human_date(meta.get("build_date", ""))
 
     tag_prefix = config.get("tag_prefix", "Build-")
     app_name = config.get("app_name", "Application")

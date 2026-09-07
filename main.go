@@ -80,6 +80,7 @@ func setWindowIcon(hwnd uintptr) {
 }
 
 func main() {
+	KillPreviousInstances()
 	LogInfo("Iniciando WhisperGo (Build: #%s)", getEffectiveBuildNumber())
 
 	subFS, err := fs.Sub(assetsFS, "assets")
@@ -419,4 +420,10 @@ func main() {
 	LogInfo("Carregando WebView2 em: %s", targetURL)
 	w.Navigate(targetURL)
 	w.Run()
+
+	if globalHotkeyMgr != nil {
+		globalHotkeyMgr.Stop()
+	}
+	LogInfo("WhisperGo encerrado com sucesso")
+	os.Exit(0)
 }
