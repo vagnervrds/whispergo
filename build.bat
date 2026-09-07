@@ -73,13 +73,42 @@ if %ERRORLEVEL% equ 0 (
     echo ======================================================
     REM Limpa possiveis arquivos renomeados residuais
     del /f /q WhisperGo_old_*.bak >nul 2>&1
+    set "BUILD_SUCCESS=1"
 ) else (
     echo.
     echo ======================================================
     echo  [ERRO] Falha na compilacao! Codigo: %ERRORLEVEL%
     echo ======================================================
+    set "BUILD_SUCCESS=0"
+)
+
+if "!BUILD_SUCCESS!"=="1" (
+    echo.
+    set "RUN_RELEASE=N"
+    set "DO_RELEASE=0"
+    set /p "RUN_RELEASE=Deseja executar o release (generate_release_notes.py)? (s/N) [Padrao: N]: "
+    if /i "!RUN_RELEASE!"=="S" set "DO_RELEASE=1"
+    if /i "!RUN_RELEASE!"=="SIM" set "DO_RELEASE=1"
+    if /i "!RUN_RELEASE!"=="Y" set "DO_RELEASE=1"
+    if /i "!RUN_RELEASE!"=="YES" set "DO_RELEASE=1"
+
+    if "!DO_RELEASE!"=="1" (
+        echo.
+        echo ======================================================
+        echo  [INFO] Executando generate_release_notes.py...
+        echo ======================================================
+        where python >nul 2>&1
+        if !errorlevel! equ 0 (
+            python generate_release_notes.py
+        ) else (
+            py generate_release_notes.py
+        )
+    ) else (
+        echo [INFO] Release ignorado.
+    )
 )
 
 echo.
 pause
+
 
