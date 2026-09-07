@@ -1,164 +1,213 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WhisperGo</title>
+  <link rel="icon" type="image/x-icon" href="icon.ico">
+  <link rel="shortcut icon" href="icon.ico">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container" id="appContainer">
     
-    <!-- Cabeçalho Compacto -->
+    <!-- Cabeçalho Ultra Compacto -->
     <header class="header">
       <div class="brand">
-        <div class="brand-icon">🎙️</div>
-        <div class="brand-title">WhisperGo</div>
+        <div class="brand-logo-wrap">
+          <img src="icon.png" alt="WhisperGo" class="brand-icon-img">
+        </div>
+        <span class="brand-title">WhisperGo</span>
         <span id="buildBadge" class="build-badge">b1</span>
       </div>
+
       <div class="header-actions">
-        <button id="btnHistory" class="icon-btn" title="Histórico da Sessão">
-          📜<span id="historyBadge" class="action-badge">0</span>
+        <!-- Botão de Expandir Gravações -->
+        <button id="btnToggleHistory" class="nav-btn" title="Gravações da Sessão">
+          <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          <span class="nav-btn-text">Gravações</span>
+          <span id="historyBadge" class="action-badge">0</span>
         </button>
-        <button id="btnSettings" class="icon-btn" title="Configurações">⚙️</button>
+
+        <!-- Botão de Expandir Configurações -->
+        <button id="btnToggleSettings" class="nav-btn icon-only" title="Configurações">
+          <svg class="btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
       </div>
     </header>
 
-    <!-- Cartão Principal de Gravação (Ultra Compacto) -->
-    <div class="recording-card">
-      <div class="card-top-row">
+    <!-- Módulo Central do Gravador (Design Principal Compacto) -->
+    <main class="recorder-card">
+      <div class="recorder-status-row">
         <div id="statusPill" class="status-pill">
           <span class="status-dot"></span>
           <span id="statusText">Pronto</span>
         </div>
-        <div class="timer-text">
+
+        <div class="timer-wrap">
           <span id="timerDisplay" class="active-timer">00:00</span>
-          <span id="pauseNotice" class="pause-tag" style="display:none;">[ouvindo pausa]</span>
+          <span id="pauseNotice" class="pause-tag" style="display:none;">[pausa]</span>
         </div>
       </div>
 
-      <!-- Visualizador de Áudio Fluido -->
-      <div class="visualizer-box">
-        <canvas id="waveform" width="340" height="46"></canvas>
+      <!-- Botão Central Estilizado de Gravador de Áudio -->
+      <div class="record-button-container">
+        <div class="pulse-ring"></div>
+        <button id="btnRecord" class="btn-record-circle" title="Iniciar Gravação (ENTER)">
+          <!-- Ícone do Microfone Gravador -->
+          <svg class="recorder-icon mic-state" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" fill="currentColor"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="22"></line>
+            <line x1="8" y1="22" x2="16" y2="22"></line>
+          </svg>
+          <!-- Ícone de Parar -->
+          <svg class="recorder-icon stop-state" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="2.5"></rect>
+          </svg>
+        </button>
       </div>
 
-      <!-- Botão Principal de Gravação -->
-      <button id="btnRecord" class="btn-primary btn-record">
-        <span>▶</span> Iniciar Gravação
-      </button>
-      <div class="key-hint">ENTER para Gravar / Parar</div>
-    </div>
-
-    <!-- Caixa de Resultado Recente (Compacta) -->
-    <div id="resultBox" class="result-card" style="display: none;">
-      <div class="result-header">
-        <span class="result-label">✨ Último Texto Polido</span>
-        <button id="btnCopy" class="sm-btn" title="Copiar">📋 Copiar</button>
-      </div>
-      <div id="finalTextPreview" class="text-preview"></div>
-      <div class="result-footer">
-        <span class="saved-hint">💾 Salvo em transcricao_final.txt</span>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Modal / Drawer de Histórico da Sessão -->
-  <div id="historyModal" class="modal-backdrop">
-    <div class="modal-box">
-      <div class="modal-header">
-        <div class="modal-title">📜 Histórico da Sessão</div>
-        <button id="btnCloseHistory" class="icon-btn" style="border:none;">✕</button>
+      <!-- Visualizador de Áudio Fluido Integrado -->
+      <div class="visualizer-container">
+        <canvas id="waveform" width="310" height="26"></canvas>
       </div>
 
-      <!-- Status de Arquivo Salvo -->
+      <div class="key-hint">
+        Pressione <span class="kbd">ENTER</span> ou atalho <span id="globalHotkeyHint" class="kbd">Ctrl + Alt + Win + R</span>
+      </div>
+    </main>
+
+    <!-- Painel Expansível: Gravações da Sessão -->
+    <section id="panelHistory" class="expandable-panel" style="display: none;">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>📜 Gravações da Sessão</span>
+          <span id="historyPanelCount" class="count-tag">0 gravações</span>
+        </div>
+        <button id="btnCloseHistory" class="collapse-btn" title="Recolher tela">
+          <span>▲ Recolher</span>
+        </button>
+      </div>
+
       <div id="saveToast" class="save-toast" style="display: none;"></div>
 
-      <div id="historyList" class="history-list">
-        <div class="empty-history">Nenhuma gravação realizada nesta sessão ainda.</div>
-      </div>
-
-      <div class="modal-footer" style="justify-content: space-between;">
-        <div style="display: flex; gap: 6px;">
-          <button id="btnSaveAllHistory" class="sm-btn" type="button" title="Salvar todas em um único arquivo .txt">💾 Salvar Tudo</button>
-          <button id="btnClearHistory" class="sm-btn" type="button" title="Limpar histórico da sessão">🗑️ Limpar</button>
+      <div id="historyList" class="history-scrollable">
+        <div class="empty-state">
+          <div class="empty-icon">🎙️</div>
+          <div>Nenhuma gravação realizada nesta sessão ainda.</div>
+          <div class="empty-sub">Grave sua fala e o texto transcrito aparecerá aqui.</div>
         </div>
-        <button id="btnCloseHistoryBtn" class="btn-secondary" type="button">Fechar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal de Configurações -->
-  <div id="settingsModal" class="modal-backdrop">
-    <div class="modal-box">
-      <div class="modal-header">
-        <div class="modal-title">⚙️ Configurações</div>
-        <button id="btnCloseModal" class="icon-btn" style="border:none;">✕</button>
       </div>
 
-      <!-- Banner de Alerta de Chave Ausente -->
+      <div class="panel-footer">
+        <button id="btnSaveAllHistory" class="panel-btn-primary" type="button" title="Salvar todas em um único arquivo .txt">
+          💾 Salvar Tudo (.txt)
+        </button>
+        <button id="btnClearHistory" class="panel-btn-subtle" type="button" title="Limpar histórico da sessão">
+          🗑️ Limpar
+        </button>
+      </div>
+    </section>
+
+    <!-- Painel Expansível: Configurações -->
+    <section id="panelSettings" class="expandable-panel" style="display: none;">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>⚙️ Configurações</span>
+        </div>
+        <button id="btnCloseSettings" class="collapse-btn" title="Recolher tela">
+          <span>▲ Recolher</span>
+        </button>
+      </div>
+
       <div id="apiKeyAlert" class="alert-banner" style="display: none;">
         ⚠️ Insira sua API Key para começar a transcrever.
       </div>
 
-      <!-- Provedor -->
-      <div class="form-group">
-        <label class="form-label">Provedor de IA</label>
-        <select id="cfgProvider" class="form-select">
-          <option value="openai">OpenAI compatível</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
-      </div>
+      <div class="settings-scrollable">
+        <!-- Provedor -->
+        <div class="form-group">
+          <label class="form-label">Provedor de IA</label>
+          <select id="cfgProvider" class="form-select">
+            <option value="openai">OpenAI compatível</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
 
-      <!-- Base URL -->
-      <div class="form-group">
-        <label class="form-label">URL Base do Provedor</label>
-        <input type="text" id="cfgBaseURL" class="form-input" placeholder="Ex: https://openrouter.ai/api/v1">
-        <span class="field-hint">Defina a URL do servidor de IA (ex: OpenRouter, vLLM, Ollama, etc.)</span>
-      </div>
+        <!-- Base URL -->
+        <div class="form-group">
+          <label class="form-label">URL Base da API</label>
+          <input type="text" id="cfgBaseURL" class="form-input" placeholder="Ex: https://openrouter.ai/api/v1">
+          <span class="field-hint">Ex: OpenRouter, vLLM, Ollama, Groq, etc.</span>
+        </div>
 
-      <!-- API Key -->
-      <div class="form-group">
-        <label class="form-label">API Key <span style="color: #ef4444;">*</span></label>
-        <div class="input-with-action">
-          <input type="password" id="cfgAPIKey" class="form-input" placeholder="Cole sua chave aqui">
-          <button id="btnToggleKey" class="sm-btn" type="button">👁️</button>
+        <!-- API Key -->
+        <div class="form-group">
+          <label class="form-label">API Key <span class="required-star">*</span></label>
+          <div class="input-with-action">
+            <input type="password" id="cfgAPIKey" class="form-input" placeholder="Cole sua chave aqui">
+            <button id="btnToggleKey" class="action-btn" type="button" title="Exibir/Ocultar chave">👁️</button>
+          </div>
+        </div>
+
+        <!-- Microfone -->
+        <div class="form-group">
+          <div class="label-with-action">
+            <label class="form-label">Dispositivo de Áudio</label>
+            <button id="btnRefreshMics" class="action-btn-sm" type="button">🔄 Atualizar</button>
+          </div>
+          <select id="cfgMicrophone" class="form-select">
+            <option value="default">Microfone Padrão do Windows</option>
+          </select>
+        </div>
+
+        <!-- Modelo de Áudio -->
+        <div class="form-group">
+          <div class="label-with-action">
+            <label class="form-label">Modelo de Transcrição (Áudio)</label>
+            <button id="btnFetchModels" class="action-btn-sm" type="button">🔍 Buscar</button>
+          </div>
+          <input type="text" id="cfgAudioModel" class="form-input" list="audioModelList" placeholder="Ex: google/gemini-2.5-flash">
+          <datalist id="audioModelList"></datalist>
+        </div>
+
+        <!-- Modelo de Reescrita -->
+        <div class="form-group">
+          <div class="label-with-action">
+            <label class="form-label">Modelo de Reescrita (Texto)</label>
+            <button id="btnFetchRewriteModels" class="action-btn-sm" type="button">🔍 Modelos</button>
+          </div>
+          <input type="text" id="cfgRewriteModel" class="form-input" list="rewriteModelList" placeholder="Ex: google/gemini-2.5-flash">
+          <datalist id="rewriteModelList"></datalist>
+        </div>
+
+        <!-- Atalho de Teclado Global -->
+        <div class="form-group">
+          <label class="form-label">Atalho Global (em qualquer programa)</label>
+          <div class="input-with-action">
+            <input type="text" id="cfgHotkey" class="form-input hotkey-input" readonly placeholder="Clique e pressione as teclas..." value="Ctrl + Alt + Win + R">
+            <button id="btnResetHotkey" class="action-btn-sm" type="button" title="Restaurar padrão">↺ Padrão</button>
+          </div>
+          <span class="field-hint">Clique e pressione a combinação desejada (ex: Ctrl + Alt + Win + R).</span>
         </div>
       </div>
 
-      <!-- Microfone -->
-      <div class="form-group">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <label class="form-label">Microfone</label>
-          <button id="btnRefreshMics" class="sm-btn" type="button" style="padding: 2px 6px;">🔄 Atualizar</button>
-        </div>
-        <select id="cfgMicrophone" class="form-select">
-          <option value="default">Microfone Padrão do Sistema</option>
-        </select>
+      <div class="panel-footer">
+        <button id="btnCancelSettings" class="panel-btn-subtle" type="button">Cancelar</button>
+        <button id="btnSaveSettings" class="panel-btn-primary" type="button">Salvar Configurações</button>
       </div>
+    </section>
 
-      <!-- Modelo de Áudio -->
-      <div class="form-group">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <label class="form-label">Modelo de Transcrição (Áudio)</label>
-          <button id="btnFetchModels" class="sm-btn" type="button" style="padding: 2px 6px;">🔍 Buscar</button>
-        </div>
-        <input type="text" id="cfgAudioModel" class="form-input" list="audioModelList" placeholder="Ex: google/gemini-2.5-flash">
-        <datalist id="audioModelList"></datalist>
-      </div>
-
-      <!-- Modelo de Reescrita -->
-      <div class="form-group">
-        <label class="form-label">Modelo de Reescrita (Texto)</label>
-        <input type="text" id="cfgRewriteModel" class="form-input" list="rewriteModelList" placeholder="Ex: google/gemini-2.5-flash">
-        <datalist id="rewriteModelList"></datalist>
-      </div>
-
-      <div class="modal-footer">
-        <button id="btnCancelSettings" class="btn-secondary" type="button">Cancelar</button>
-        <button id="btnSaveSettings" class="btn-save" type="button">Salvar</button>
-      </div>
-    </div>
   </div>
 
   <script src="app.js"></script>

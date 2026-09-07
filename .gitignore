@@ -1,6 +1,8 @@
 # Arquivos de configuracao pessoal e chaves de API
 whisper_config.json
+release_ai_config.json
 config.json
+release_notes.txt
 
 # Saidas e transcricoes de audio
 transcricao_final.txt

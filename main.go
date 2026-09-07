@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"embed"
@@ -59,6 +59,26 @@ func applyDarkTitleBar(hwnd uintptr) {
 	_, _, _ = setAttr.Call(hwnd, 36, uintptr(unsafe.Pointer(&textColor)), 4)
 }
 
+func setWindowIcon(hwnd uintptr) {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	user32 := syscall.NewLazyDLL("user32.dll")
+	getModuleHandle := kernel32.NewProc("GetModuleHandleW")
+	loadIcon := user32.NewProc("LoadIconW")
+	sendMessage := user32.NewProc("SendMessageW")
+
+	hInst, _, _ := getModuleHandle.Call(0)
+	hIcon, _, _ := loadIcon.Call(hInst, uintptr(1))
+	if hIcon != 0 {
+		const (
+			WM_SETICON = 0x0080
+			ICON_SMALL = 0
+			ICON_BIG   = 1
+		)
+		_, _, _ = sendMessage.Call(hwnd, WM_SETICON, ICON_BIG, hIcon)
+		_, _, _ = sendMessage.Call(hwnd, WM_SETICON, ICON_SMALL, hIcon)
+	}
+}
+
 func main() {
 	LogInfo("Iniciando WhisperGo (Build: #%s)", getEffectiveBuildNumber())
 
@@ -91,8 +111,8 @@ func main() {
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "WhisperGo",
-			Width:  390,
-			Height: 460,
+			Width:  360,
+			Height: 250,
 			Center: true,
 		},
 	})
@@ -103,10 +123,27 @@ func main() {
 	}
 	defer w.Destroy()
 
-	// Ajusta a barra de título do Windows para o tema escuro da aplicação (#0b0f19)
-	applyDarkTitleBar(uintptr(w.Window()))
+	// Binding: setWindowSize para expandir e contrair a janela nativa
+	w.Bind("setWindowSize", func(width, height int) {
+		w.Dispatch(func() {
+			w.SetSize(width, height, webview2.HintNone)
+		})
+	})
 
-	_ = LoadConfig()
+	hwnd := uintptr(w.Window())
+
+	// Ajusta a barra de título do Windows para o tema escuro da aplicação (#0b0f19)
+	applyDarkTitleBar(hwnd)
+	setWindowIcon(hwnd)
+
+	initialCfg := LoadConfig()
+
+	// Inicia o gerenciador de atalho de teclado global
+	StartGlobalHotkeyManager(hwnd, initialCfg.GlobalHotkey, func() {
+		w.Dispatch(func() {
+			w.Eval("btnRecord.click();")
+		})
+	})
 
 	// Binding: getConfig
 	w.Bind("getConfig", func() string {
@@ -124,6 +161,9 @@ func main() {
 		}
 		if err := SaveConfig(newCfg); err != nil {
 			return false
+		}
+		if globalHotkeyMgr != nil {
+			globalHotkeyMgr.UpdateHotkey(newCfg.GlobalHotkey)
 		}
 		return true
 	})
@@ -249,6 +289,10 @@ func main() {
 		activeRecorder = rec
 		LogInfo("Gravação iniciada com sucesso")
 
+		// Coloca a janela em primeiro plano (Always-on-Top) enquanto grava
+		RestoreAndFocusWindow(hwnd)
+		SetWindowTopmost(hwnd, true)
+
 		return map[string]string{"status": "ok"}
 	})
 
@@ -259,6 +303,9 @@ func main() {
 		rec := activeRecorder
 		activeRecorder = nil
 		recorderMutex.Unlock()
+
+		// Remove a janela do modo Always-on-Top ao encerrar a gravação
+		SetWindowTopmost(hwnd, false)
 
 		if rec == nil {
 			return false

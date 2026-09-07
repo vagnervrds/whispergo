@@ -1,4 +1,4 @@
-﻿{
+{
   "provider": "openai",
   "base_url": "https://openrouter.ai/api/v1",
   "api_key": "SUA_API_KEY_AQUI",
@@ -10,5 +10,6 @@
   "max_chunk_seconds": 35,
   "silence_pause_seconds": 0.45,
   "silence_threshold": 0.008,
-  "sample_rate": 16000
+  "sample_rate": 16000,
+  "global_hotkey": "Ctrl + Alt + Win + R"
 }

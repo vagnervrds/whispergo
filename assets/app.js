@@ -1,37 +1,39 @@
-﻿// WhisperGo UI Logic - Non-blocking Queue & Session History Export
+// WhisperGo UI Logic - Compact Modern Recorder & Dynamic Screen Expansion
 
 let isRecording = false;
 let currentConfig = null;
 let currentVolume = 0;
 let animFrameId = null;
 let sessionHistory = [];
+let activePanel = null; // null = compacto, 'history' = gravações, 'settings' = configurações
 
-// Elementos DOM
+// Elementos Principais
+const appContainer = document.getElementById("appContainer");
 const btnRecord = document.getElementById("btnRecord");
+const recordBtnContainer = document.querySelector(".record-button-container");
 const statusPill = document.getElementById("statusPill");
 const statusText = document.getElementById("statusText");
 const timerDisplay = document.getElementById("timerDisplay");
 const pauseNotice = document.getElementById("pauseNotice");
 const buildBadge = document.getElementById("buildBadge");
-const resultBox = document.getElementById("resultBox");
-const finalTextPreview = document.getElementById("finalTextPreview");
-const btnCopy = document.getElementById("btnCopy");
 
-// Histórico
-const btnHistory = document.getElementById("btnHistory");
+// Alternadores de Painel no Cabeçalho
+const btnToggleHistory = document.getElementById("btnToggleHistory");
+const btnToggleSettings = document.getElementById("btnToggleSettings");
 const historyBadge = document.getElementById("historyBadge");
-const historyModal = document.getElementById("historyModal");
+
+// Painel de Histórico / Gravações
+const panelHistory = document.getElementById("panelHistory");
 const btnCloseHistory = document.getElementById("btnCloseHistory");
-const btnCloseHistoryBtn = document.getElementById("btnCloseHistoryBtn");
-const btnClearHistory = document.getElementById("btnClearHistory");
-const btnSaveAllHistory = document.getElementById("btnSaveAllHistory");
+const historyPanelCount = document.getElementById("historyPanelCount");
 const historyList = document.getElementById("historyList");
+const btnSaveAllHistory = document.getElementById("btnSaveAllHistory");
+const btnClearHistory = document.getElementById("btnClearHistory");
 const saveToast = document.getElementById("saveToast");
 
-// Configurações Modal
-const btnSettings = document.getElementById("btnSettings");
-const settingsModal = document.getElementById("settingsModal");
-const btnCloseModal = document.getElementById("btnCloseModal");
+// Painel de Configurações
+const panelSettings = document.getElementById("panelSettings");
+const btnCloseSettings = document.getElementById("btnCloseSettings");
 const btnCancelSettings = document.getElementById("btnCancelSettings");
 const btnSaveSettings = document.getElementById("btnSaveSettings");
 const apiKeyAlert = document.getElementById("apiKeyAlert");
@@ -44,77 +46,131 @@ const btnRefreshMics = document.getElementById("btnRefreshMics");
 const cfgAudioModel = document.getElementById("cfgAudioModel");
 const cfgRewriteModel = document.getElementById("cfgRewriteModel");
 const btnFetchModels = document.getElementById("btnFetchModels");
+const btnFetchRewriteModels = document.getElementById("btnFetchRewriteModels");
 const audioModelList = document.getElementById("audioModelList");
 const rewriteModelList = document.getElementById("rewriteModelList");
+const cfgHotkey = document.getElementById("cfgHotkey");
+const btnResetHotkey = document.getElementById("btnResetHotkey");
+const globalHotkeyHint = document.getElementById("globalHotkeyHint");
 
-// Canvas
+// Canvas Waveform
 const canvas = document.getElementById("waveform");
 const ctx = canvas.getContext("2d");
 
-// Atalho da Tecla ENTER para Iniciar / Parar Gravação
+// ============================================================================
+// Expansão / Retração Dinâmica da Janela
+// ============================================================================
+function setPanel(panelName) {
+  if (activePanel === panelName) {
+    // Se clicar no mesmo botão que já está aberto, fecha e volta para o modo compacto
+    activePanel = null;
+  } else {
+    activePanel = panelName;
+  }
+
+  // Atualiza visibilidade dos painéis
+  if (activePanel === "history") {
+    panelHistory.style.display = "flex";
+    panelSettings.style.display = "none";
+    btnToggleHistory.classList.add("active");
+    btnToggleSettings.classList.remove("active");
+    resizeNativeWindow(360, 520);
+    hideToast();
+  } else if (activePanel === "settings") {
+    panelHistory.style.display = "none";
+    panelSettings.style.display = "flex";
+    btnToggleHistory.classList.remove("active");
+    btnToggleSettings.classList.add("active");
+    resizeNativeWindow(360, 580);
+    loadSettingsData();
+  } else {
+    panelHistory.style.display = "none";
+    panelSettings.style.display = "none";
+    btnToggleHistory.classList.remove("active");
+    btnToggleSettings.classList.remove("active");
+    resizeNativeWindow(360, 250);
+  }
+}
+
+function resizeNativeWindow(w, h) {
+  if (window.setWindowSize) {
+    window.setWindowSize(w, h);
+  }
+}
+
+btnToggleHistory.addEventListener("click", () => setPanel("history"));
+btnToggleSettings.addEventListener("click", () => setPanel("settings"));
+btnCloseHistory.addEventListener("click", () => setPanel(null));
+btnCloseSettings.addEventListener("click", () => setPanel(null));
+btnCancelSettings.addEventListener("click", () => setPanel(null));
+
+// ============================================================================
+// Atalho Tecla ENTER
+// ============================================================================
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
-    const isSettingsOpen = settingsModal.classList.contains("active");
-    const isHistoryOpen = historyModal.classList.contains("active");
-    if (isSettingsOpen || isHistoryOpen) return;
-
     const activeEl = document.activeElement;
     const tag = activeEl ? activeEl.tagName.toLowerCase() : "";
-    if (tag === "input" || tag === "textarea") return;
+    if (tag === "input" || tag === "select" || tag === "textarea") return;
 
     e.preventDefault();
     btnRecord.click();
   }
 });
 
-// Desenho da Forma de Onda Fluida
+// ============================================================================
+// Visualizador Waveform Canvas
+// ============================================================================
 function drawWaveform() {
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  const numBars = 24;
-  const barWidth = 6;
+  const numBars = 26;
+  const barWidth = 4;
   const spacing = (width - numBars * barWidth) / (numBars + 1);
   const time = Date.now() * 0.005;
 
   for (let i = 0; i < numBars; i++) {
     const x = spacing + i * (barWidth + spacing);
-    let barHeight = 4;
+    let barHeight = 3;
 
     if (isRecording) {
       const norm = Math.min(1.0, currentVolume);
       const centerFactor = Math.sin((i / (numBars - 1)) * Math.PI);
-      const osc = 0.5 + 0.5 * Math.sin(time * 3.5 + i * 0.5);
-      barHeight = 4 + (norm * centerFactor * osc * (height - 8));
-      barHeight = Math.max(4, Math.min(height - 4, barHeight));
+      const osc = 0.5 + 0.5 * Math.sin(time * 3.5 + i * 0.45);
+      barHeight = 3 + (norm * centerFactor * osc * (height - 6));
+      barHeight = Math.max(3, Math.min(height - 2, barHeight));
 
       const gradient = ctx.createLinearGradient(0, height - barHeight, 0, height);
       gradient.addColorStop(0, "#ef4444");
       gradient.addColorStop(1, "#f97316");
       ctx.fillStyle = gradient;
     } else {
-      // Idle pulse sutil
-      const pulse = 2 + Math.sin(time + i * 0.25) * 1.5;
-      barHeight = Math.max(3, pulse);
-      ctx.fillStyle = "#25334d";
+      // Idle sutil
+      const pulse = 2 + Math.sin(time * 0.8 + i * 0.2) * 1.5;
+      barHeight = Math.max(2, pulse);
+      ctx.fillStyle = "#1e293b";
     }
 
     const y = (height - barHeight) / 2;
     ctx.beginPath();
-    ctx.roundRect(x, y, barWidth, barHeight, 3);
+    ctx.roundRect(x, y, barWidth, barHeight, 2);
     ctx.fill();
   }
 
   animFrameId = requestAnimationFrame(drawWaveform);
 }
 
-// Botão Iniciar / Parar com Fila Não-Bloqueante
+// ============================================================================
+// Gravação
+// ============================================================================
 btnRecord.addEventListener("click", async () => {
   if (!isRecording) {
-    // Verificação de API Key antes de começar
+    // Validação de API Key
     if (!currentConfig || !currentConfig.api_key || !currentConfig.api_key.trim()) {
-      openSettingsModal(true);
+      setPanel("settings");
+      showApiKeyAlert();
       return;
     }
 
@@ -122,7 +178,8 @@ btnRecord.addEventListener("click", async () => {
       const res = await window.startRecording();
       if (res && res.error) {
         if (res.error === "API_KEY_REQUIRED") {
-          openSettingsModal(true);
+          setPanel("settings");
+          showApiKeyAlert();
         } else {
           alert("Aviso: " + (res.message || res.error));
         }
@@ -131,11 +188,11 @@ btnRecord.addEventListener("click", async () => {
     }
     setRecordingState(true);
   } else {
-    // Para a gravação atual e envia para a fila em segundo plano
+    // Para gravação física e envia para fila de transcrição
     setRecordingState(false);
-    updateStatus("Enviado para a fila...", "processing");
+    updateStatus("Processando áudio...", "processing");
     if (window.stopRecording) {
-      window.stopRecording(); // Executa em background sem bloquear a UI!
+      window.stopRecording();
     }
   }
 });
@@ -143,14 +200,14 @@ btnRecord.addEventListener("click", async () => {
 function setRecordingState(recording) {
   isRecording = recording;
   if (recording) {
-    btnRecord.className = "btn-primary btn-stop";
-    btnRecord.innerHTML = "<span>⏹</span> Finalizar e Polir";
+    recordBtnContainer.classList.add("is-recording");
+    btnRecord.title = "Finalizar Gravação (ENTER)";
     updateStatus("Gravando...", "recording");
     timerDisplay.innerText = "00:00";
     pauseNotice.style.display = "none";
   } else {
-    btnRecord.className = "btn-primary btn-record";
-    btnRecord.innerHTML = "<span>▶</span> Iniciar Gravação";
+    recordBtnContainer.classList.remove("is-recording");
+    btnRecord.title = "Iniciar Gravação (ENTER)";
     timerDisplay.innerText = "00:00";
     pauseNotice.style.display = "none";
   }
@@ -161,7 +218,7 @@ function updateStatus(text, type) {
   statusPill.className = "status-pill " + (type || "");
 }
 
-// Callbacks do Backend Go
+// Callbacks acionados pelo Go
 window.onVolumeUpdate = function(vol, totalSec, isPauseWait) {
   currentVolume = vol;
   if (isRecording) {
@@ -178,58 +235,113 @@ window.onStatusChange = function(status, type) {
   }
 };
 
-// Disparado quando uma gravação da fila conclui o polimento final
+// Disparado quando uma gravação termina o polimento e é copiada para o clipboard
 window.onSessionFinished = function(finalText, timeStr) {
-  finalTextPreview.innerText = finalText;
-  resultBox.style.display = "flex";
   if (!isRecording) {
-    updateStatus("Copiado!", "success");
+    updateStatus("✓ Copiado!", "success");
+    setTimeout(() => {
+      if (!isRecording) updateStatus("Pronto", "");
+    }, 4000);
   }
 
-  // Registra no histórico da sessão
+  // Adiciona ao histórico da sessão
   sessionHistory.unshift({
     id: Date.now(),
     time: timeStr,
     text: finalText
   });
+
+  // Atualiza a badge com animação pop
+  historyBadge.classList.remove("bump");
+  void historyBadge.offsetWidth; // Força reflow
+  historyBadge.classList.add("bump");
+
   updateHistoryUI();
 };
 
-// Copiar texto mais recente
-btnCopy.addEventListener("click", async () => {
-  const text = finalTextPreview.innerText;
-  if (!text) return;
-  if (window.copyToClipboard) {
-    await window.copyToClipboard(text);
-  } else {
-    navigator.clipboard.writeText(text);
-  }
-  btnCopy.innerText = "✓ Copiado!";
-  btnCopy.classList.add("success");
-  setTimeout(() => {
-    btnCopy.innerText = "📋 Copiar";
-    btnCopy.classList.remove("success");
-  }, 1600);
-});
+// ============================================================================
+// Histórico / Gravações da Sessão
+// ============================================================================
+function updateHistoryUI() {
+  const count = sessionHistory.length;
+  historyBadge.innerText = count;
+  historyPanelCount.innerText = `${count} ${count === 1 ? 'gravação' : 'gravações'}`;
 
-// Modal de Histórico da Sessão
-btnHistory.addEventListener("click", () => {
-  historyModal.classList.add("active");
-  hideToast();
-});
-btnCloseHistory.addEventListener("click", () => {
-  historyModal.classList.remove("active");
-});
-btnCloseHistoryBtn.addEventListener("click", () => {
-  historyModal.classList.remove("active");
-});
+  if (count === 0) {
+    historyList.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🎙️</div>
+        <div>Nenhuma gravação realizada nesta sessão ainda.</div>
+        <div class="empty-sub">Grave sua fala e o texto transcrito aparecerá aqui.</div>
+      </div>
+    `;
+    return;
+  }
+
+  historyList.innerHTML = "";
+  sessionHistory.forEach((item, index) => {
+    const isLatest = index === 0;
+    const card = document.createElement("div");
+    card.className = `history-card ${isLatest ? 'latest' : ''}`;
+    card.innerHTML = `
+      <div class="history-card-header">
+        <div class="history-meta">
+          <span class="history-timestamp">🕒 ${item.time}</span>
+          ${isLatest ? '<span class="latest-tag">Mais Recente</span>' : ''}
+        </div>
+        <div class="history-actions">
+          <button class="sm-action-btn btn-copy-card" title="Copiar texto">📋 Copiar</button>
+          <button class="sm-action-btn btn-save-card" title="Salvar em arquivo .txt">💾 Salvar</button>
+        </div>
+      </div>
+      <div class="history-card-body">${escapeHtml(item.text)}</div>
+    `;
+
+    // Copiar card individual
+    const copyBtn = card.querySelector(".btn-copy-card");
+    copyBtn.addEventListener("click", async () => {
+      if (window.copyToClipboard) {
+        await window.copyToClipboard(item.text);
+      } else {
+        navigator.clipboard.writeText(item.text);
+      }
+      copyBtn.innerText = "✓ Copiado!";
+      copyBtn.classList.add("success");
+      setTimeout(() => {
+        copyBtn.innerText = "📋 Copiar";
+        copyBtn.classList.remove("success");
+      }, 1500);
+    });
+
+    // Salvar card individual
+    const saveBtn = card.querySelector(".btn-save-card");
+    saveBtn.addEventListener("click", async () => {
+      if (window.saveSingleRecording) {
+        const res = await window.saveSingleRecording(item.text, item.time);
+        if (res && res.success) {
+          saveBtn.innerText = "✓";
+          saveBtn.classList.add("success");
+          showToast(`✓ Salvo em transcricoes/${res.filename}`);
+          setTimeout(() => {
+            saveBtn.innerText = "💾 Salvar";
+            saveBtn.classList.remove("success");
+          }, 2000);
+        } else {
+          alert("Erro ao salvar arquivo: " + (res && res.error));
+        }
+      }
+    });
+
+    historyList.appendChild(card);
+  });
+}
+
 btnClearHistory.addEventListener("click", () => {
   sessionHistory = [];
   updateHistoryUI();
   hideToast();
 });
 
-// Salvar toda a sessão em um único arquivo
 btnSaveAllHistory.addEventListener("click", async () => {
   if (sessionHistory.length === 0) {
     alert("Não há gravações na sessão para salvar.");
@@ -263,98 +375,25 @@ function hideToast() {
   saveToast.style.display = "none";
 }
 
-function updateHistoryUI() {
-  historyBadge.innerText = sessionHistory.length;
-  if (sessionHistory.length === 0) {
-    historyList.innerHTML = '<div class="empty-history">Nenhuma gravação realizada nesta sessão ainda.</div>';
-    return;
-  }
-
-  historyList.innerHTML = "";
-  sessionHistory.forEach(item => {
-    const el = document.createElement("div");
-    el.className = "history-item";
-    el.innerHTML = `
-      <div class="history-item-top">
-        <span class="history-time">🕒 ${item.time}</span>
-        <div style="display: flex; gap: 4px;">
-          <button class="sm-btn btn-copy-hist" data-id="${item.id}">📋 Copiar</button>
-          <button class="sm-btn btn-save-hist" data-id="${item.id}">💾 Salvar</button>
-        </div>
-      </div>
-      <div class="history-text">${escapeHtml(item.text)}</div>
-    `;
-
-    // Botão Copiar individual
-    const copyBtn = el.querySelector(".btn-copy-hist");
-    copyBtn.addEventListener("click", async () => {
-      if (window.copyToClipboard) {
-        await window.copyToClipboard(item.text);
-      } else {
-        navigator.clipboard.writeText(item.text);
-      }
-      copyBtn.innerText = "✓";
-      copyBtn.classList.add("success");
-      setTimeout(() => {
-        copyBtn.innerText = "📋 Copiar";
-        copyBtn.classList.remove("success");
-      }, 1600);
-    });
-
-    // Botão Salvar individual
-    const saveBtn = el.querySelector(".btn-save-hist");
-    saveBtn.addEventListener("click", async () => {
-      if (window.saveSingleRecording) {
-        const res = await window.saveSingleRecording(item.text, item.time);
-        if (res && res.success) {
-          saveBtn.innerText = "✓";
-          saveBtn.classList.add("success");
-          showToast(`✓ Salvo em transcricoes/${res.filename}`);
-          setTimeout(() => {
-            saveBtn.innerText = "💾 Salvar";
-            saveBtn.classList.remove("success");
-          }, 2000);
-        } else {
-          alert("Erro ao salvar arquivo: " + (res && res.error));
-        }
-      }
-    });
-
-    historyList.appendChild(el);
-  });
-}
-
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Modal de Configurações
-btnSettings.addEventListener("click", () => {
-  openSettingsModal(false);
-});
-btnCloseModal.addEventListener("click", () => {
-  settingsModal.classList.remove("active");
-});
-btnCancelSettings.addEventListener("click", () => {
-  settingsModal.classList.remove("active");
-});
-
-async function openSettingsModal(showApiKeyAlert) {
+// ============================================================================
+// Configurações
+// ============================================================================
+async function loadSettingsData() {
   if (window.getConfig) {
     const jsonStr = await window.getConfig();
     currentConfig = JSON.parse(jsonStr);
     populateSettings(currentConfig);
   }
   await refreshMicrophones();
+}
 
-  if (showApiKeyAlert) {
-    apiKeyAlert.style.display = "block";
-    setTimeout(() => { cfgAPIKey.focus(); }, 150);
-  } else {
-    apiKeyAlert.style.display = "none";
-  }
-
-  settingsModal.classList.add("active");
+function showApiKeyAlert() {
+  apiKeyAlert.style.display = "block";
+  setTimeout(() => { cfgAPIKey.focus(); }, 150);
 }
 
 function populateSettings(cfg) {
@@ -363,8 +402,91 @@ function populateSettings(cfg) {
   cfgAPIKey.value = cfg.api_key || "";
   cfgAudioModel.value = cfg.last_audio_model || "google/gemini-2.5-flash";
   cfgRewriteModel.value = cfg.last_rewrite_model || "google/gemini-2.5-flash";
+  if (cfgHotkey) {
+    cfgHotkey.value = cfg.global_hotkey || "Ctrl + Alt + Win + R";
+  }
 
   updateProviderHints(cfgProvider.value);
+}
+
+// Interatividade do Campo de Atalho Global
+let savedHotkeyBeforeFocus = "";
+
+if (cfgHotkey) {
+  cfgHotkey.addEventListener("focus", () => {
+    savedHotkeyBeforeFocus = cfgHotkey.value;
+    cfgHotkey.classList.add("recording-key");
+    cfgHotkey.value = "Pressione as teclas...";
+  });
+
+  cfgHotkey.addEventListener("blur", () => {
+    cfgHotkey.classList.remove("recording-key");
+    if (!cfgHotkey.value || cfgHotkey.value === "Pressione as teclas..." || cfgHotkey.value.endsWith(" + ...")) {
+      cfgHotkey.value = savedHotkeyBeforeFocus || "Ctrl + Alt + Win + R";
+    }
+  });
+
+  cfgHotkey.addEventListener("keydown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Cancelar com ESC
+    if (e.key === "Escape") {
+      cfgHotkey.value = savedHotkeyBeforeFocus || "Ctrl + Alt + Win + R";
+      cfgHotkey.blur();
+      return;
+    }
+
+    const mods = [];
+    if (e.ctrlKey) mods.push("Ctrl");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Win");
+
+    const isModifierOnly = ["Control", "Alt", "Shift", "Meta"].includes(e.key);
+
+    if (isModifierOnly) {
+      if (mods.length > 0) {
+        cfgHotkey.value = mods.join(" + ") + " + ...";
+      }
+      return;
+    }
+
+    // Identifica o nome da tecla
+    let keyName = "";
+    if (e.code && e.code.startsWith("Key")) {
+      keyName = e.code.slice(3).toUpperCase();
+    } else if (e.code && e.code.startsWith("Digit")) {
+      keyName = e.code.slice(5);
+    } else if (e.code && /^F\d+$/i.test(e.code)) {
+      keyName = e.code.toUpperCase();
+    } else if (e.code === "Space") {
+      keyName = "Space";
+    } else if (e.key && e.key.length === 1) {
+      keyName = e.key.toUpperCase();
+    } else {
+      keyName = e.key;
+    }
+
+    // Garante ao menos um modificador (Ctrl por segurança) se nenhum foi pressionado
+    if (mods.length === 0) {
+      mods.push("Ctrl");
+    }
+
+    const finalHotkey = mods.join(" + ") + " + " + keyName;
+    cfgHotkey.value = finalHotkey;
+    savedHotkeyBeforeFocus = finalHotkey;
+    cfgHotkey.blur();
+  });
+}
+
+if (btnResetHotkey) {
+  btnResetHotkey.addEventListener("click", () => {
+    if (cfgHotkey) {
+      cfgHotkey.value = "Ctrl + Alt + Win + R";
+      savedHotkeyBeforeFocus = "Ctrl + Alt + Win + R";
+    }
+  });
 }
 
 cfgProvider.addEventListener("change", () => {
@@ -396,7 +518,7 @@ async function refreshMicrophones() {
   if (!window.listMicrophones) return;
   const listJson = await window.listMicrophones();
   const mics = JSON.parse(listJson);
-  cfgMicrophone.innerHTML = '<option value="default">Microfone Padrão do Sistema</option>';
+  cfgMicrophone.innerHTML = '<option value="default">Microfone Padrão do Windows</option>';
   mics.forEach(m => {
     const opt = document.createElement("option");
     opt.value = m.name;
@@ -409,8 +531,8 @@ async function refreshMicrophones() {
 }
 btnRefreshMics.addEventListener("click", refreshMicrophones);
 
-btnFetchModels.addEventListener("click", async () => {
-  btnFetchModels.innerText = "...";
+async function fetchModelsHandler(btn) {
+  btn.innerText = "...";
   try {
     if (window.fetchModels) {
       const modelsJson = await window.fetchModels();
@@ -430,9 +552,14 @@ btnFetchModels.addEventListener("click", async () => {
   } catch(e) {
     alert("Erro ao buscar modelos: " + e);
   } finally {
-    btnFetchModels.innerText = "🔍 Buscar";
+    btn.innerText = btn === btnFetchModels ? "🔍 Buscar" : "🔍 Modelos";
   }
-});
+}
+
+btnFetchModels.addEventListener("click", () => fetchModelsHandler(btnFetchModels));
+if (btnFetchRewriteModels) {
+  btnFetchRewriteModels.addEventListener("click", () => fetchModelsHandler(btnFetchRewriteModels));
+}
 
 btnSaveSettings.addEventListener("click", async () => {
   const newCfg = {
@@ -446,23 +573,32 @@ btnSaveSettings.addEventListener("click", async () => {
     max_chunk_seconds: (currentConfig && currentConfig.max_chunk_seconds) || 35,
     silence_pause_seconds: (currentConfig && currentConfig.silence_pause_seconds) || 0.45,
     silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.008,
-    sample_rate: (currentConfig && currentConfig.sample_rate) || 16000
+    sample_rate: (currentConfig && currentConfig.sample_rate) || 16000,
+    global_hotkey: (cfgHotkey && cfgHotkey.value.trim()) || "Ctrl + Alt + Win + R"
   };
 
   if (window.saveConfig) {
     await window.saveConfig(JSON.stringify(newCfg));
   }
   currentConfig = newCfg;
-  settingsModal.classList.remove("active");
+  if (globalHotkeyHint) {
+    globalHotkeyHint.innerText = newCfg.global_hotkey;
+  }
   apiKeyAlert.style.display = "none";
+  setPanel(null); // Volta ao modo compacto com sucesso!
 });
 
+// ============================================================================
 // Inicialização
+// ============================================================================
 window.addEventListener("DOMContentLoaded", async () => {
   drawWaveform();
   if (window.getConfig) {
     const jsonStr = await window.getConfig();
     currentConfig = JSON.parse(jsonStr);
+    if (currentConfig && currentConfig.global_hotkey && globalHotkeyHint) {
+      globalHotkeyHint.innerText = currentConfig.global_hotkey;
+    }
   }
   if (window.getAppInfo) {
     const info = JSON.parse(await window.getAppInfo());
@@ -471,3 +607,4 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 });
+

@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"encoding/json"
@@ -21,6 +21,7 @@ type Config struct {
 	SilencePauseSeconds float64 `json:"silence_pause_seconds"`
 	SilenceThreshold    float64 `json:"silence_threshold"`
 	SampleRate          int     `json:"sample_rate"`
+	GlobalHotkey        string  `json:"global_hotkey"`
 }
 
 func DefaultConfig() Config {
@@ -37,6 +38,7 @@ func DefaultConfig() Config {
 		SilencePauseSeconds: 0.45,
 		SilenceThreshold:    0.008, // Sensibilidade aprimorada para captar fala mais sutil
 		SampleRate:          16000,
+		GlobalHotkey:        "Ctrl + Alt + Win + R",
 	}
 }
 
@@ -92,6 +94,9 @@ func LoadConfig() Config {
 	}
 	if cfg.LastRewriteModel == "" {
 		cfg.LastRewriteModel = "google/gemini-2.5-flash"
+	}
+	if cfg.GlobalHotkey == "" {
+		cfg.GlobalHotkey = "Ctrl + Alt + Win + R"
 	}
 
 	return cfg

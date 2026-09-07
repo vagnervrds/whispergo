@@ -41,6 +41,16 @@ for /f %%i in ('powershell -NoProfile -Command ^
 )
 
 echo [INFO] Incrementando Build para: #%BUILD_NUM%
+
+REM Garante a geracao/atualizacao dos recursos de icone com go-winres
+if exist "icon.ico" (
+    where go-winres >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo [INFO] Atualizando recursos de icone do executavel...
+        go-winres simply --icon icon.ico --manifest gui --arch amd64 >nul 2>&1
+    )
+)
+
 echo [INFO] Compilando WhisperGo.exe...
 
 REM Flags de compilacao

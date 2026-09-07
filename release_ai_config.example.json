@@ -1,0 +1,17 @@
+{
+  "app_name": "WhisperGo",
+  "app_description": "Transcrição contínua de voz ultra-rápida e inteligente diretamente para a área de transferência",
+  "github_repo": "seu-usuario/whispergo",
+  "api_url": "https://proxyai.targetfollow.pro/v1/chat/completions",
+  "api_key": "SUA_API_KEY_AQUI",
+  "model_name": "gemini-3-flash",
+  "temperature": 0.3,
+  "timeout_seconds": 30,
+  "commit_limit": 30,
+  "cleanup_keep_releases": 3,
+  "tag_prefix": "Build-",
+  "asset_paths": [
+    "WhisperGo.exe"
+  ],
+  "custom_prompt": ""
+}
