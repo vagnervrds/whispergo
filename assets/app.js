@@ -43,6 +43,8 @@ const cfgAPIKey = document.getElementById("cfgAPIKey");
 const btnToggleKey = document.getElementById("btnToggleKey");
 const cfgMicrophone = document.getElementById("cfgMicrophone");
 const btnRefreshMics = document.getElementById("btnRefreshMics");
+const cfgMinChunkSeconds = document.getElementById("cfgMinChunkSeconds");
+const cfgMaxChunkSeconds = document.getElementById("cfgMaxChunkSeconds");
 const cfgAudioModel = document.getElementById("cfgAudioModel");
 const cfgRewriteModel = document.getElementById("cfgRewriteModel");
 const btnFetchModels = document.getElementById("btnFetchModels");
@@ -54,6 +56,8 @@ const btnResetHotkey = document.getElementById("btnResetHotkey");
 const globalHotkeyHint = document.getElementById("globalHotkeyHint");
 const cfgSoundNotification = document.getElementById("cfgSoundNotification");
 const btnTestSound = document.getElementById("btnTestSound");
+const chunksTracker = document.getElementById("chunksTracker");
+const keyHint = document.getElementById("keyHint");
 
 // Canvas Waveform
 const canvas = document.getElementById("waveform");
@@ -83,14 +87,14 @@ function setPanel(panelName) {
     panelSettings.style.display = "flex";
     btnToggleHistory.classList.remove("active");
     btnToggleSettings.classList.add("active");
-    resizeNativeWindow(360, 580);
+    resizeNativeWindow(360, 620);
     loadSettingsData();
   } else {
     panelHistory.style.display = "none";
     panelSettings.style.display = "none";
     btnToggleHistory.classList.remove("active");
     btnToggleSettings.classList.remove("active");
-    resizeNativeWindow(360, 208);
+    resizeNativeWindow(360, 214);
   }
 }
 
@@ -199,9 +203,91 @@ btnRecord.addEventListener("click", async () => {
   }
 });
 
+let chunksTrackerTimer = null;
+
+function clearChunksTracker() {
+  if (chunksTrackerTimer) {
+    clearTimeout(chunksTrackerTimer);
+    chunksTrackerTimer = null;
+  }
+  if (chunksTracker) {
+    Array.from(chunksTracker.children).forEach(chip => {
+      if (chip._doneTimer) clearTimeout(chip._doneTimer);
+      if (chip._removeTimer) clearTimeout(chip._removeTimer);
+    });
+    chunksTracker.innerHTML = "";
+    chunksTracker.style.display = "none";
+  }
+  if (keyHint) {
+    keyHint.style.display = "block";
+  }
+}
+
+window.onChunkStatus = function(index, state, label) {
+  if (!chunksTracker) return;
+  if (chunksTrackerTimer) {
+    clearTimeout(chunksTrackerTimer);
+    chunksTrackerTimer = null;
+  }
+
+  chunksTracker.style.display = "flex";
+  if (keyHint) keyHint.style.display = "none";
+
+  let chip = document.getElementById(`chunkChip_${index}`);
+  if (!chip) {
+    chip = document.createElement("div");
+    chip.id = `chunkChip_${index}`;
+    chip.className = `chunk-chip ${state}`;
+    chip.innerHTML = `<span class="chip-dot"></span><span class="chip-label">Bloco ${index}: ${escapeHtml(label)}</span>`;
+    chunksTracker.appendChild(chip);
+  } else {
+    chip.className = `chunk-chip ${state}`;
+    const labelEl = chip.querySelector(".chip-label");
+    if (labelEl) labelEl.innerText = `Bloco ${index}: ${label}`;
+  }
+
+  // Garante que o bloco atual ou recém-adicionado fique 100% visível na tela
+  requestAnimationFrame(() => {
+    chunksTracker.scrollTo({
+      left: chunksTracker.scrollWidth,
+      behavior: "smooth"
+    });
+    if (chip && typeof chip.scrollIntoView === "function") {
+      chip.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+    }
+  });
+
+  // Se o bloco foi concluído, inicia contagem de 3 segundos para remoção suave
+  if (chip._doneTimer) {
+    clearTimeout(chip._doneTimer);
+    chip._doneTimer = null;
+  }
+  if (chip._removeTimer) {
+    clearTimeout(chip._removeTimer);
+    chip._removeTimer = null;
+  }
+
+  if (state === "done") {
+    chip._doneTimer = setTimeout(() => {
+      if (chip && chip.parentNode) {
+        chip.classList.add("fade-out");
+        chip._removeTimer = setTimeout(() => {
+          if (chip && chip.parentNode) {
+            chip.remove();
+            if (chunksTracker && chunksTracker.children.length === 0 && !isRecording) {
+              clearChunksTracker();
+            }
+          }
+        }, 300);
+      }
+    }, 3000);
+  }
+};
+
 function setRecordingState(recording) {
   isRecording = recording;
   if (recording) {
+    clearChunksTracker();
     recordBtnContainer.classList.add("is-recording");
     btnRecord.title = "Finalizar Gravação (ENTER)";
     updateStatus("Gravando...", "recording");
@@ -244,6 +330,11 @@ window.onSessionFinished = function(finalText, timeStr) {
     setTimeout(() => {
       if (!isRecording) updateStatus("Pronto", "");
     }, 4000);
+
+    // Mantém os chips concluídos visíveis por 6s antes de restaurar a dica do teclado
+    chunksTrackerTimer = setTimeout(() => {
+      if (!isRecording) clearChunksTracker();
+    }, 6000);
   }
 
   // Adiciona ao histórico da sessão
@@ -406,6 +497,12 @@ function populateSettings(cfg) {
   cfgRewriteModel.value = cfg.last_rewrite_model || "google/gemini-2.5-flash";
   if (cfgHotkey) {
     cfgHotkey.value = cfg.global_hotkey || "Ctrl + Alt + Win + R";
+  }
+  if (cfgMinChunkSeconds) {
+    cfgMinChunkSeconds.value = cfg.min_chunk_seconds || 20;
+  }
+  if (cfgMaxChunkSeconds) {
+    cfgMaxChunkSeconds.value = cfg.max_chunk_seconds || 35;
   }
   if (cfgSoundNotification) {
     cfgSoundNotification.checked = (cfg.sound_notification !== false);
@@ -575,6 +672,13 @@ if (btnFetchRewriteModels) {
 }
 
 btnSaveSettings.addEventListener("click", async () => {
+  const minChunk = parseInt(cfgMinChunkSeconds ? cfgMinChunkSeconds.value : "20", 10) || 20;
+  let maxChunk = parseInt(cfgMaxChunkSeconds ? cfgMaxChunkSeconds.value : "35", 10) || 35;
+  if (maxChunk <= minChunk) {
+    maxChunk = minChunk + 5;
+    if (cfgMaxChunkSeconds) cfgMaxChunkSeconds.value = maxChunk;
+  }
+
   const newCfg = {
     provider: cfgProvider.value,
     base_url: cfgBaseURL.value.trim(),
@@ -582,8 +686,8 @@ btnSaveSettings.addEventListener("click", async () => {
     selected_microphone: cfgMicrophone.value,
     last_audio_model: cfgAudioModel.value.trim(),
     last_rewrite_model: cfgRewriteModel.value.trim(),
-    min_chunk_seconds: (currentConfig && currentConfig.min_chunk_seconds) || 20,
-    max_chunk_seconds: (currentConfig && currentConfig.max_chunk_seconds) || 35,
+    min_chunk_seconds: minChunk,
+    max_chunk_seconds: maxChunk,
     silence_pause_seconds: (currentConfig && currentConfig.silence_pause_seconds) || 0.45,
     silence_threshold: (currentConfig && currentConfig.silence_threshold) || 0.008,
     sample_rate: (currentConfig && currentConfig.sample_rate) || 16000,

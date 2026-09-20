@@ -85,6 +85,9 @@ func LoadConfig() Config {
 	if cfg.MaxChunkSeconds <= 0 {
 		cfg.MaxChunkSeconds = 35
 	}
+	if cfg.MaxChunkSeconds <= cfg.MinChunkSeconds {
+		cfg.MaxChunkSeconds = cfg.MinChunkSeconds + 5
+	}
 	if cfg.SilencePauseSeconds <= 0 {
 		cfg.SilencePauseSeconds = 0.45
 	}

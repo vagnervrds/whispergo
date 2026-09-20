@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"encoding/binary"
@@ -203,6 +203,9 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 	maxChunkSec := float64(r.cfg.MaxChunkSeconds)
 	if maxChunkSec <= 0 {
 		maxChunkSec = 35.0
+	}
+	if maxChunkSec <= minChunkSec {
+		maxChunkSec = minChunkSec + 5.0
 	}
 	silencePauseSec := r.cfg.SilencePauseSeconds
 	if silencePauseSec <= 0 {

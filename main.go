@@ -125,7 +125,7 @@ func main() {
 	defer w.Destroy()
 
 	// Garante tamanho inicial padronizado da área útil (modo compacto)
-	w.SetSize(360, 208, webview2.HintNone)
+	w.SetSize(360, 214, webview2.HintNone)
 
 	// Binding: setWindowSize para expandir e contrair a janela nativa
 	w.Bind("setWindowSize", func(width, height int) {
@@ -296,7 +296,12 @@ func main() {
 		}
 
 		activeRecorder = rec
-		LogInfo("Gravação iniciada com sucesso")
+		sessionStartTime := time.Now().Format("15:04:05")
+
+		// Inicia o pipeline assíncrono de transcrição em tempo real para cada bloco gerado
+		go processSessionAsync(rec, currentCfg, sessionStartTime, w)
+
+		LogInfo("Gravação iniciada com sucesso [%s]", sessionStartTime)
 
 		// Coloca a janela em primeiro plano (Always-on-Top) enquanto grava
 		RestoreAndFocusWindow(hwnd)
@@ -320,99 +325,8 @@ func main() {
 			return false
 		}
 
-		currentCfg := LoadConfig()
-		sessionStartTime := time.Now().Format("15:04:05")
-
-		// Despacha o processamento em background independente para esta sessão!
-		go func(r *AudioRecorder, cfg Config, sessTime string) {
-			LogInfo("Iniciando fila de processamento em background para gravação de [%s]", sessTime)
-
-			// Para a gravação física (libera o microfone para a próxima gravação!)
-			r.Stop()
-
-			var sessionTexts []string
-			tempDir := os.TempDir()
-
-			for chunk := range r.chunkChan {
-				LogInfo("Fila: processando Bloco %d (%d amostras, Final: %t, Motivo: %s)",
-					chunk.Index, len(chunk.Samples), chunk.IsFinal, chunk.Reason)
-
-				rawWav := filepath.Join(tempDir, fmt.Sprintf("whisper_raw_%d_%d.wav", time.Now().UnixNano(), chunk.Index))
-				cleanWav := filepath.Join(tempDir, fmt.Sprintf("whisper_clean_%d_%d.wav", time.Now().UnixNano(), chunk.Index))
-
-				if err := WriteWavFile(rawWav, chunk.Samples, cfg.SampleRate); err != nil {
-					LogError(err, "Falha ao gravar arquivo WAV temporário %s", rawWav)
-					continue
-				}
-
-				wavToSend := rawWav
-				if CleanAudioFFmpeg(rawWav, cleanWav) {
-					wavToSend = cleanWav
-					LogInfo("FFmpeg silenceremove aplicado com sucesso no Bloco %d", chunk.Index)
-				} else {
-					LogWarn("FFmpeg não reduziu o áudio do Bloco %d. Usando WAV original.", chunk.Index)
-				}
-
-				text, err := TranscribeAudio(wavToSend, cfg.LastAudioModel, cfg)
-				if err != nil {
-					LogError(err, "Erro ao transcrever Bloco %d", chunk.Index)
-				}
-
-				_ = os.Remove(rawWav)
-				_ = os.Remove(cleanWav)
-
-				if strings.TrimSpace(text) != "" {
-					LogInfo("Bloco %d transcrito com sucesso: \"%s\"", chunk.Index, text)
-					sessionTexts = append(sessionTexts, text)
-				} else {
-					LogInfo("Bloco %d finalizado sem falas identificadas", chunk.Index)
-				}
-			}
-
-			fullRaw := strings.Join(sessionTexts, " ")
-			LogInfo("Todos os blocos da gravação [%s] foram transcritos. Texto bruto (%d caracteres): \"%s\"",
-				sessTime, len(fullRaw), fullRaw)
-
-			if strings.TrimSpace(fullRaw) == "" {
-				LogWarn("Nenhuma fala identificada na gravação de [%s]", sessTime)
-				w.Dispatch(func() {
-					w.Eval("window.onStatusChange('Nenhuma fala identificada.', '');")
-				})
-				return
-			}
-
-			w.Dispatch(func() {
-				w.Eval("window.onStatusChange('Polindo texto...', 'processing');")
-			})
-
-			finalText, err := RewriteText(fullRaw, cfg.LastRewriteModel, cfg)
-			if err != nil || strings.TrimSpace(finalText) == "" {
-				LogError(err, "Falha ao reescrever texto. Utilizando texto bruto.")
-				finalText = fullRaw
-			} else {
-				LogInfo("Texto polido e reescrito com sucesso para [%s] (%d caracteres)", sessTime, len(finalText))
-			}
-
-			// Copia para a área de transferência
-			_ = clipboard.WriteAll(finalText)
-			LogInfo("Texto final copiado para o Clipboard")
-
-			// Salva em transcricao_final.txt
-			_ = os.WriteFile("transcricao_final.txt", []byte(finalText+"\n"), 0644)
-
-			// Sinal sonoro agradável após conclusão da otimização do texto
-			if cfg.SoundNotification {
-				PlayNotificationSound()
-			}
-
-			escapedFinal, _ := json.Marshal(finalText)
-			escapedTime, _ := json.Marshal(sessTime)
-
-			w.Dispatch(func() {
-				w.Eval(fmt.Sprintf("window.onSessionFinished(%s, %s);", string(escapedFinal), string(escapedTime)))
-			})
-		}(rec, currentCfg, sessionStartTime)
-
+		// Para a gravação física (libera o microfone, drena o buffer residual e fecha r.chunkChan)
+		rec.Stop()
 		return true
 	})
 
@@ -426,4 +340,144 @@ func main() {
 	}
 	LogInfo("WhisperGo encerrado com sucesso")
 	os.Exit(0)
+}
+
+// processSessionAsync processa e envia os blocos para a IA em tempo real conforme são cortados
+func processSessionAsync(r *AudioRecorder, cfg Config, sessTime string, w webview2.WebView) {
+	LogInfo("Iniciando pipeline assíncrono em tempo real para gravação de [%s]", sessTime)
+	tempDir := os.TempDir()
+
+	type chunkResult struct {
+		index int
+		text  string
+	}
+
+	var wg sync.WaitGroup
+	resultChan := make(chan chunkResult, 100)
+
+	// Consome r.chunkChan EM TEMPO REAL enquanto o usuário ainda está falando!
+	for chunk := range r.chunkChan {
+		chunk := chunk
+		wg.Add(1)
+		go func(c AudioChunk) {
+			defer wg.Done()
+			LogInfo("Pipeline assíncrono: processando Bloco %d (%d amostras, Final: %t, Motivo: %s)",
+				c.Index, len(c.Samples), c.IsFinal, c.Reason)
+
+			// 1. Notifica início do pré-processamento (FFmpeg)
+			w.Dispatch(func() {
+				w.Eval(fmt.Sprintf("if (window.onChunkStatus) window.onChunkStatus(%d, 'processing', 'processando');", c.Index))
+			})
+
+			rawWav := filepath.Join(tempDir, fmt.Sprintf("whisper_raw_%d_%d.wav", time.Now().UnixNano(), c.Index))
+			cleanWav := filepath.Join(tempDir, fmt.Sprintf("whisper_clean_%d_%d.wav", time.Now().UnixNano(), c.Index))
+
+			if err := WriteWavFile(rawWav, c.Samples, cfg.SampleRate); err != nil {
+				LogError(err, "Falha ao gravar arquivo WAV temporário %s", rawWav)
+				w.Dispatch(func() {
+					w.Eval(fmt.Sprintf("if (window.onChunkStatus) window.onChunkStatus(%d, 'error', 'falha');", c.Index))
+				})
+				return
+			}
+			defer os.Remove(rawWav)
+
+			wavToSend := rawWav
+			if CleanAudioFFmpeg(rawWav, cleanWav) {
+				wavToSend = cleanWav
+				defer os.Remove(cleanWav)
+				LogInfo("FFmpeg silenceremove aplicado com sucesso no Bloco %d", c.Index)
+			} else {
+				LogWarn("FFmpeg não reduziu o áudio do Bloco %d. Usando WAV original.", c.Index)
+			}
+
+			// 2. Notifica envio para transcrição pela IA
+			w.Dispatch(func() {
+				w.Eval(fmt.Sprintf("if (window.onChunkStatus) window.onChunkStatus(%d, 'transcribing', 'transcrevendo');", c.Index))
+			})
+
+			text, err := TranscribeAudio(wavToSend, cfg.LastAudioModel, cfg)
+			if err != nil {
+				LogError(err, "Erro ao transcrever Bloco %d", c.Index)
+				w.Dispatch(func() {
+					w.Eval(fmt.Sprintf("if (window.onChunkStatus) window.onChunkStatus(%d, 'error', 'falha');", c.Index))
+				})
+			} else {
+				w.Dispatch(func() {
+					w.Eval(fmt.Sprintf("if (window.onChunkStatus) window.onChunkStatus(%d, 'done', 'concluído ✓');", c.Index))
+				})
+			}
+
+			if strings.TrimSpace(text) != "" {
+				LogInfo("Bloco %d transcrito com sucesso em background: \"%s\"", c.Index, text)
+				resultChan <- chunkResult{index: c.Index, text: text}
+			} else {
+				LogInfo("Bloco %d finalizado sem falas identificadas", c.Index)
+			}
+		}(chunk)
+	}
+
+	// O loop for range termina assim que r.Stop() fecha r.chunkChan
+	LogInfo("Gravação encerrada. Aguardando conclusão dos blocos pendentes para [%s]...", sessTime)
+	wg.Wait()
+	close(resultChan)
+
+	// Coleta todos os resultados e ordena pelo índice do bloco
+	resultsMap := make(map[int]string)
+	maxIdx := 0
+	for res := range resultChan {
+		resultsMap[res.index] = res.text
+		if res.index > maxIdx {
+			maxIdx = res.index
+		}
+	}
+
+	var sessionTexts []string
+	for i := 1; i <= maxIdx; i++ {
+		if txt, ok := resultsMap[i]; ok && strings.TrimSpace(txt) != "" {
+			sessionTexts = append(sessionTexts, txt)
+		}
+	}
+
+	fullRaw := strings.Join(sessionTexts, " ")
+	LogInfo("Todos os blocos da gravação [%s] foram transcritos. Texto bruto (%d caracteres): \"%s\"",
+		sessTime, len(fullRaw), fullRaw)
+
+	if strings.TrimSpace(fullRaw) == "" {
+		LogWarn("Nenhuma fala identificada na gravação de [%s]", sessTime)
+		w.Dispatch(func() {
+			w.Eval("window.onStatusChange('Nenhuma fala identificada.', '');")
+		})
+		return
+	}
+
+	w.Dispatch(func() {
+		w.Eval("window.onStatusChange('Polindo texto...', 'processing');")
+	})
+
+	finalText, err := RewriteText(fullRaw, cfg.LastRewriteModel, cfg)
+	if err != nil || strings.TrimSpace(finalText) == "" {
+		LogError(err, "Falha ao reescrever texto. Utilizando texto bruto.")
+		finalText = fullRaw
+	} else {
+		LogInfo("Texto polido e reescrito com sucesso para [%s] (%d caracteres)", sessTime, len(finalText))
+	}
+
+	// Copia para a área de transferência
+	_ = clipboard.WriteAll(finalText)
+	LogInfo("Texto final copiado para o Clipboard")
+
+	// Salva em transcricao_final.txt
+	_ = os.WriteFile("transcricao_final.txt", []byte(finalText+"\n"), 0644)
+
+	// Sinal sonoro agradável após conclusão da otimização do texto
+	if cfg.SoundNotification {
+		PlayNotificationSound()
+	}
+
+	escapedFinal, _ := json.Marshal(finalText)
+	escapedTime, _ := json.Marshal(sessTime)
+
+	w.Dispatch(func() {
+		w.Eval(fmt.Sprintf("window.onSessionFinished(%s, %s);", string(escapedFinal), string(escapedTime)))
+	})
 }

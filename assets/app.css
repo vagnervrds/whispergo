@@ -370,6 +370,114 @@ canvas#waveform {
   display: block;
 }
 
+/* ==========================================================================
+   Rastreador Compacto de Processamento de Blocos
+   ========================================================================== */
+.chunks-tracker {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 4px;
+  min-height: 22px;
+  max-width: 100%;
+  scroll-behavior: smooth;
+}
+
+.chunks-tracker::-webkit-scrollbar {
+  height: 2px;
+}
+.chunks-tracker::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 2px;
+}
+
+.chunk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #111a2e;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 2px 7px;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  animation: fadeInChip 0.18s ease-out;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.chunk-chip.fade-out {
+  opacity: 0;
+  transform: scale(0.85);
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  margin-left: 0;
+  margin-right: -5px;
+  border-width: 0;
+  overflow: hidden;
+}
+
+.chunk-chip .chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.chunk-chip.processing {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.12);
+  color: #93c5fd;
+}
+.chunk-chip.processing .chip-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 5px #3b82f6;
+  animation: pulseDot 0.8s infinite;
+}
+
+.chunk-chip.transcribing {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd34d;
+}
+.chunk-chip.transcribing .chip-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 5px #f59e0b;
+  animation: pulseDot 0.7s infinite;
+}
+
+.chunk-chip.done {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+}
+.chunk-chip.done .chip-dot {
+  background: #10b981;
+  box-shadow: 0 0 4px #10b981;
+}
+
+.chunk-chip.error {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+.chunk-chip.error .chip-dot {
+  background: #ef4444;
+}
+
+@keyframes fadeInChip {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .key-hint {
   font-size: 9px;
   color: var(--text-dim);
