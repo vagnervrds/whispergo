@@ -237,11 +237,15 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 				dur := float64(len(buffer)) / float64(sampleRate)
 				LogInfo("Bloco final com duração: %.2fs (%d amostras)", dur, len(buffer))
 				if dur >= 0.3 {
-					r.chunkChan <- AudioChunk{
-						Index:   chunkIndex,
-						Samples: buffer,
-						Reason:  fmt.Sprintf("Bloco Final ao encerrar (%.1fs)", dur),
-						IsFinal: true,
+					if accumulatedSilence >= dur-0.15 && dur >= 0.8 {
+						LogInfo("Bloco final descartado: composto exclusivamente por silêncio residual (%.1fs).", dur)
+					} else {
+						r.chunkChan <- AudioChunk{
+							Index:   chunkIndex,
+							Samples: buffer,
+							Reason:  fmt.Sprintf("Bloco Final ao encerrar (%.1fs)", dur),
+							IsFinal: true,
+						}
 					}
 				} else {
 					LogInfo("Bloco final muito curto (<0.3s). Descartado.")
@@ -284,6 +288,16 @@ func (r *AudioRecorder) chunkingWorker(rawChan <-chan []float32, sampleRate uint
 				}
 
 				LogInfo("Corte de Bloco %d: %s", chunkIndex, reason)
+
+				// Se o bloco acumulado consistir quase que inteiramente em silêncio contínuo (ex: o usuário já concluiu a fala e o microfone ficou em silêncio),
+				// descartamos o bloco para evitar consumo inútil de API e alucinações causadas por ruídos de fundo.
+				if accumulatedSilence >= chunkElapsedSec-0.2 && chunkElapsedSec >= 1.0 {
+					LogInfo("Bloco %d descartado: contém apenas silêncio contínuo (%.1fs de silêncio em %.1fs)",
+						chunkIndex, accumulatedSilence, chunkElapsedSec)
+					buffer = nil
+					accumulatedSilence = 0
+					continue
+				}
 
 				chunkToSend := make([]float32, len(buffer))
 				copy(chunkToSend, buffer)

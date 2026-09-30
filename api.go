@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -97,7 +97,7 @@ func TranscribeAudio(wavPath string, modelName string, cfg Config) (string, erro
 					},
 					map[string]any{
 						"type": "text",
-						"text": "Transcreva este áudio em português com máxima fidelidade. Retorne APENAS o texto falado, sem nenhuma palavra ou explicação adicional.",
+						"text": "Transcreva este áudio em português com máxima fidelidade. Retorne APENAS o texto falado, sem nenhuma palavra ou explicação adicional. Se houver apenas silêncio, ruídos de fundo, respiração, estática ou sons ininteligíveis, retorne estritamente uma resposta vazia. NUNCA invente, deduza ou alucine falas.",
 					},
 				},
 			},
@@ -127,7 +127,7 @@ func TranscribeAudio(wavPath string, modelName string, cfg Config) (string, erro
 					},
 					map[string]any{
 						"type": "text",
-						"text": "Transcreva este áudio em português com fidelidade. Retorne APENAS o texto falado.",
+						"text": "Transcreva este áudio em português com fidelidade. Retorne APENAS o texto falado. Se o áudio contiver apenas silêncio, ruídos de fundo ou sons ininteligíveis, retorne vazio. NUNCA invente ou alucine frases.",
 					},
 				},
 			},
@@ -156,12 +156,26 @@ func RewriteText(rawText string, modelName string, cfg Config) (string, error) {
 	baseURL := getBaseURL(cfg)
 	LogInfo("Iniciando reescrita de texto (%d caracteres) com o modelo '%s' (Provedor: %s)", len(rawText), modelName, cfg.Provider)
 
-	promptSistema := "Você é um assistente de pós-processamento de fala e transcrição. " +
-		"Receberá o texto bruto falado que foi transcrito de um microfone em blocos. " +
-		"Sua tarefa é reescrever o texto completo corrigindo pontuação, concordância, ortografia, " +
-		"remoção de repetições desnecessárias, gaguejos e vícios de fala, deixando-o coeso, limpo e natural. " +
-		"NÃO altere o significado nem acrescente ideias inexistentes. " +
-		"Retorne APENAS o texto final corrigido e polido."
+	promptSistema := "Você é um especialista em pós-processamento, higienização e polimento de transcrições de fala.\n" +
+		"O texto fornecido foi capturado via microfone e transcrito em blocos por modelos de reconhecimento de voz.\n\n" +
+		"SUAS REGRAS E DIRETRIZES FUNDAMENTAIS:\n\n" +
+		"1. IDENTIFICAÇÃO DO TEMA CENTRAL E COERÊNCIA:\n" +
+		"   - Analise o texto integralmente para compreender o assunto principal, a intenção e a linha de raciocínio do orador.\n" +
+		"   - Garanta que todo o texto resultante esteja estritamente coeso, lógico e alinhado a esse tema central.\n\n" +
+		"2. ELIMINAÇÃO IMPLACÁVEL DE ALUCINAÇÕES E RUÍDOS (PRIORIDADE MÁXIMA):\n" +
+		"   - Transcrições de voz frequentemente contêm 'alucinações' geradas por ruídos de fundo, respiração, cliques ou trechos de silêncio.\n" +
+		"   - REMOVA E DESCARTE sumariamente qualquer frase, oração, comentário ou fragmento que seja desconexo, sem sentido no contexto, bizarro ou que fuja abruptamente do tema do assunto (por exemplo: frases dramáticas soltas, clichês de vídeos/legendas como 'obrigado por assistir', 'inscreva-se', 'legendas feitas por', ou desabafos e comentários aleatórios sem relação com o raciocínio central).\n" +
+		"   - NUNCA preserve uma sentença sem sentido ou alucinada só porque ela apareceu na transcrição bruta.\n\n" +
+		"3. LIMPEZA, POLIMENTO E NATURALIDADE:\n" +
+		"   - Corrija pontuação, concordância verbal/nominal, capitalização e ortografia.\n" +
+		"   - Remova gaguejos, hesitações, falsos inícios e vícios orais desnecessários (ex.: 'né', 'tipo', 'hã', 'então assim').\n" +
+		"   - Estruture as frases em parágrafos claros, mantendo o tom natural e profissional.\n\n" +
+		"4. FIDELIDADE AO CONTEÚDO REAL:\n" +
+		"   - NÃO adicione ideias novas, suposições ou opiniões próprias que o orador não mencionou.\n" +
+		"   - Preserve termos técnicos, números, nomes e as reais intenções e instruções do falante com fidelidade.\n\n" +
+		"5. FORMATO DE SAÍDA:\n" +
+		"   - Retorne EXCLUSIVAMENTE o texto final corrigido, limpo e polido.\n" +
+		"   - Não inclua introduções, explicações, notas, cumprimentos ou metatexto (como 'Aqui está o texto revisado:')."
 
 	if cfg.Provider == "anthropic" {
 		return sendAnthropicRequest(baseURL, modelName, promptSistema, rawText, cfg)
@@ -178,7 +192,7 @@ func RewriteText(rawText string, modelName string, cfg Config) (string, error) {
 			},
 			map[string]string{
 				"role":    "user",
-				"content": fmt.Sprintf("Texto transcrito bruto:\n\n%s", rawText),
+				"content": fmt.Sprintf("Texto bruto da transcrição:\n\n%s\n\nInstrução: Limpe quaisquer alucinações, ruídos de fundo e trechos desconexos fora do tema central. Retorne apenas o texto final polido e coeso.", rawText),
 			},
 		},
 	}
@@ -266,7 +280,7 @@ func sendAnthropicRequest(baseURL string, model string, systemPrompt string, raw
 		"messages": []map[string]string{
 			{
 				"role":    "user",
-				"content": fmt.Sprintf("Texto transcrito bruto:\n\n%s", rawText),
+				"content": fmt.Sprintf("Texto bruto da transcrição:\n\n%s\n\nInstrução: Limpe quaisquer alucinações, ruídos de fundo e trechos desconexos fora do tema central. Retorne apenas o texto final polido e coeso.", rawText),
 			},
 		},
 	}
